@@ -1,0 +1,23 @@
+{
+  "name": "zoowork_project",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srikondapalli1/zoowork_project.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/srikondapalli1/zoowork_project/issues"
+  },
+  "homepage": "https://github.com/srikondapalli1/zoowork_project#readme",
+  "dependencies": {
+    "@zoowork-ai/sdk": "^0.14.0"
+  }
+}
