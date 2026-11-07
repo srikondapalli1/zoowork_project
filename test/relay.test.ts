@@ -99,6 +99,54 @@ test('a submit during a running turn replaces the queued event: the latest offer
   await relay.stop()
 })
 
+test('an offer waiting behind a running turn still gets a reply within the deadline (template, then the agent replaces it)', async () => {
+  const { relay, io } = await liveRelay()
+  const b = await join_(relay)
+  relay.submit(b, 70, 'offer')
+  await sleep(20)
+  relay.turns.onRecorded(b.id) // turn 1 is answered but its run has not finished yet
+  await sleep(50)
+  relay.submit(b, 80, 'offer') // waits behind the running turn
+  assert.equal(io.posts.length, 1)
+  await sleep(380) // past the 300 ms deadline, counted from the second submit
+  assert.equal(b.reply?.kind, 'template', 'the waiting offer already has a template reply')
+  assert.ok(relay.turns.metrics.some((m) => m.outcome === 'queue_timeout'))
+  relay.turns.finish(b.id)
+  await sleep(10)
+  assert.deepEqual(io.posts[1]?.ev, { event: 'offer', amount: 80, intent: 'offer' }, 'the agent still gets to answer the queued offer')
+  relay.turns.onRecorded(b.id)
+  relay.turns.finish(b.id)
+  await relay.stop()
+})
+
+test('a newer offer interrupts a turn that has not answered; the deadline counts from the submit', async () => {
+  const { relay, io } = await liveRelay()
+  const b = await join_(relay)
+  relay.submit(b, 70, 'offer')
+  await sleep(20)
+  assert.equal(io.posts.length, 1)
+  await sleep(60)
+  relay.submit(b, 80, 'offer')
+  assert.deepEqual(io.interrupts, [b.id], 'the unanswered turn is interrupted')
+  assert.ok(relay.turns.metrics.some((m) => m.outcome === 'superseded'))
+  // the interrupted turn can no longer record a reply
+  const stale = await handleTool(relay, 'negotiator', { buyerId: b.id }, 'record_counter', { label: 'countered', amount: 99, line: 'Old news.' })
+  assert.equal((stale.value as { ok: boolean }).ok, false)
+  await sleep(150) // the interrupt takes a while to land, so the new turn starts late
+  relay.turns.finish(b.id) // run.finished(aborted)
+  await sleep(10)
+  assert.deepEqual(io.posts[1]?.ev, { event: 'offer', amount: 80, intent: 'offer' })
+  // The 300 ms promise counts from the second submit (about 170 ms ago), not from this turn's start:
+  await sleep(60) // ~240 ms after the submit
+  const replyOf = (): Buyer['reply'] => b.reply
+  assert.equal(replyOf(), undefined, 'not yet')
+  await sleep(110) // ~350 ms after the submit; a clock started at the turn start would not have fired yet (~530 ms)
+  assert.equal(replyOf()?.kind, 'template')
+  assert.ok(relay.turns.metrics.some((m) => m.outcome === 'timeout'))
+  relay.turns.finish(b.id)
+  await relay.stop()
+})
+
 test('the global cap holds turns in a FIFO queue', async () => {
   const { relay, io } = await liveRelay()
   const buyers = [await join_(relay), await join_(relay), await join_(relay)]

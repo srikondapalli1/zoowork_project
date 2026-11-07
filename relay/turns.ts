@@ -18,6 +18,9 @@ interface TurnState {
   inFlight: boolean
   queued?: NegotiatorEvent | undefined
   current?: NegotiatorEvent | undefined
+  /** When the buyer submitted the event that is queued / running: the 8-second promise counts from here. */
+  queuedAt: number
+  currentAt: number
   seq: number
   recorded: boolean
   stale: boolean
@@ -25,12 +28,14 @@ interface TurnState {
   startedAt: number
   deadline?: NodeJS.Timeout | undefined
   guard?: NodeJS.Timeout | undefined
+  /** Timer for an offer that is still waiting its turn: the buyer is owed a reply within the deadline too. */
+  queueTimer?: NodeJS.Timeout | undefined
 }
 
 export interface TurnMetric {
   buyer_id: string
   ms: number
-  outcome: 'recorded' | 'timeout' | 'no_reply'
+  outcome: 'recorded' | 'timeout' | 'no_reply' | 'queue_timeout' | 'superseded'
 }
 
 export class TurnManager {
@@ -60,7 +65,7 @@ export class TurnManager {
   private state(buyerId: string): TurnState {
     let s = this.st.get(buyerId)
     if (!s) {
-      s = { inFlight: false, seq: 0, recorded: false, stale: false, holdsSlot: false, startedAt: 0 }
+      s = { inFlight: false, queuedAt: 0, currentAt: 0, seq: 0, recorded: false, stale: false, holdsSlot: false, startedAt: 0 }
       this.st.set(buyerId, s)
     }
     return s
@@ -71,6 +76,12 @@ export class TurnManager {
     const s = this.state(buyerId)
     const wasQueued = s.queued !== undefined
     s.queued = ev
+    s.queuedAt = this.now()
+    if (s.queueTimer) clearTimeout(s.queueTimer)
+    s.queueTimer = setTimeout(() => this.onQueueDeadline(buyerId), config.turnDeadlineMs)
+    // A running turn that has not answered is about an older offer: the latest offer counts, so stop it
+    // rather than make this buyer wait for an answer nobody needs.
+    if (s.inFlight && !s.recorded && !s.stale) this.supersede(buyerId, s)
     if (!s.inFlight && !wasQueued) this.waiting.push(buyerId)
     this.pump()
   }
@@ -88,6 +99,8 @@ export class TurnManager {
     const buyer = this.engine.buyerById(buyerId)
     const ev = s.queued
     s.queued = undefined
+    if (s.queueTimer) clearTimeout(s.queueTimer)
+    s.queueTimer = undefined
     if (!buyer || !ev) return
     s.inFlight = true
     s.current = ev
@@ -96,16 +109,41 @@ export class TurnManager {
     s.stale = false
     s.holdsSlot = true
     s.startedAt = this.now()
+    s.currentAt = s.queuedAt
     buyer.check_fails = 0
     this.running += 1
     this.engine.state.stats.events_posted += 1
-    s.deadline = setTimeout(() => this.onDeadline(buyerId), config.turnDeadlineMs)
+    const remaining = Math.max(0, s.currentAt + config.turnDeadlineMs - this.now())
+    s.deadline = setTimeout(() => this.onDeadline(buyerId), remaining)
     this.io()
       .postNegotiator(buyer, ev, s.seq)
       .catch((err: unknown) => {
         console.error(`[turn] post failed for ${buyer.handle}:`, (err as Error).message)
         this.onDeadline(buyerId)
       })
+  }
+
+  private supersede(buyerId: string, s: TurnState): void {
+    s.stale = true
+    if (s.deadline) clearTimeout(s.deadline)
+    s.deadline = undefined
+    this.metrics.push({ buyer_id: buyerId, ms: this.now() - s.startedAt, outcome: 'superseded' })
+    const buyer = this.engine.buyerById(buyerId)
+    if (buyer) this.io().interruptNegotiator(buyer).catch(() => {})
+    // If the interrupt never produces run.finished, free the buyer anyway.
+    if (s.guard) clearTimeout(s.guard)
+    s.guard = setTimeout(() => this.finish(buyerId), 4000)
+  }
+
+  /** An offer waited too long behind a running turn or the global cap: send the template now; the agent's reply still replaces it later. */
+  private onQueueDeadline(buyerId: string): void {
+    const s = this.state(buyerId)
+    s.queueTimer = undefined
+    if (!s.queued || s.queued.event !== 'offer') return
+    const buyer = this.engine.buyerById(buyerId)
+    if (!buyer) return
+    this.metrics.push({ buyer_id: buyerId, ms: config.turnDeadlineMs, outcome: 'queue_timeout' })
+    this.engine.applyFallback(buyer, this.now())
   }
 
   private releaseSlot(s: TurnState): void {
@@ -164,7 +202,11 @@ export class TurnManager {
 
   /** Auction closed: drop everything that has not started. */
   dropQueued(): void {
-    for (const s of this.st.values()) s.queued = undefined
+    for (const s of this.st.values()) {
+      s.queued = undefined
+      if (s.queueTimer) clearTimeout(s.queueTimer)
+      s.queueTimer = undefined
+    }
     this.waiting = []
   }
 
@@ -172,6 +214,7 @@ export class TurnManager {
     for (const s of this.st.values()) {
       if (s.deadline) clearTimeout(s.deadline)
       if (s.guard) clearTimeout(s.guard)
+      if (s.queueTimer) clearTimeout(s.queueTimer)
     }
     this.st.clear()
     this.waiting = []
