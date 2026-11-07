@@ -64,6 +64,35 @@ Check **Usage** in ZooWork Platform for actual charges.
 
 Keep every key out of the repo and off the slides.
 
+## Run the room demo on real phones
+
+Phones can only open the QR code if the relay has a public https address, so the relay on your laptop needs a tunnel in front of it.
+One command does all of it:
+
+```bash
+npm run demo -- --stub        # free rehearsal with local stand-ins: do this first, on real phones
+npm run demo                  # live on ZooWork Managed Agents (needs ZOOWORK_API_KEY and `npm run create-agents`)
+```
+
+It checks your setup, starts a cloudflared tunnel and the relay with the right `PUBLIC_BASE_URL`, confirms the relay answers **from outside**,
+and prints three URLs plus a QR code you can scan from the terminal:
+
+| URL | Who |
+|---|---|
+| `<tunnel>/screen` | the projector |
+| `<tunnel>/admin?token=...` | the presenter's phone (keep this URL private: it is the admin key) |
+| `<tunnel>/join` | the room and the judges |
+
+The QR code on the big screen encodes `/join`, a stable link that shows "waiting for the seller" until a listing is approved and then forwards
+every phone to it. So the link can be shared or printed ahead of time, and a phone that arrives late lands on the live auction.
+If the relay is told a public address that cannot work (for example `localhost`), the terminal, the seller console and the big screen all say so,
+and `npm run demo` prints NOT READY instead of a QR code until the tunnel answers.
+
+Other options: `--tunnel none` with your own tunnel via `PUBLIC_BASE_URL=https://...` (ngrok, a reserved cloudflared domain), `--seconds 60`,
+`--max-buyers 40`, `--port 8787`. Check everything without starting anything: `npm run preflight -- --url https://<tunnel>`.
+
+Each phone is a live agent session, so a big room costs more and sees more template fallbacks; the room is capped at 40 by default.
+
 ## Marketplace channel (browser-use agent)
 
 A second way for buyers to arrive, next to the room QR: a fake marketplace, **Swapspot** (Facebook-Marketplace-style, deliberately

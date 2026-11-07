@@ -41,3 +41,25 @@ export const config = {
 }
 
 export type Config = typeof config
+
+/** Is this a URL phones in the room can actually open? */
+export function publicUrlProblem(raw: string): { level: 'fail' | 'warn'; message: string } | undefined {
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    return { level: 'fail', message: 'PUBLIC_BASE_URL is not a valid URL.' }
+  }
+  const host = u.hostname.toLowerCase()
+  const privateHost =
+    host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host === '0.0.0.0' || host === '[::1]' ||
+    /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  if (privateHost) {
+    return {
+      level: 'fail',
+      message: `PUBLIC_BASE_URL (${u.origin}) points at this machine or a private network, so phones in the room cannot open the QR code. Start a tunnel and set PUBLIC_BASE_URL to its https address.`,
+    }
+  }
+  if (u.protocol !== 'https:') return { level: 'warn', message: 'PUBLIC_BASE_URL is not https: use an https tunnel so phones and cookies behave.' }
+  return undefined
+}

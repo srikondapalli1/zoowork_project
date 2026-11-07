@@ -11,7 +11,9 @@
     "quickstart": "node quickstart.mts",
     "record:marketplace": "node scripts/record-marketplace.ts",
     "buyers": "node bot/marketplace-buyers.ts",
-    "record:qr": "node scripts/record-qr.ts"
+    "record:qr": "node scripts/record-qr.ts",
+    "preflight": "node scripts/preflight.ts",
+    "demo": "node scripts/demo.ts"
   },
   "repository": {
     "type": "git",

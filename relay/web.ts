@@ -5,7 +5,7 @@ import { extname, join } from 'node:path'
 import QRCode from 'qrcode'
 import { computeFairValue, priceSetup, validateOfferBody, type Comp, type Condition } from './book.ts'
 import { template } from './check.ts'
-import { config } from './config.ts'
+import { config, publicUrlProblem } from './config.ts'
 import type { Buyer, Listing } from './engine.ts'
 import { CSP, HttpError, MIME, parseCookies, readBody, safeEqual, send } from './http.ts'
 import { handleMarket } from './market/web.ts'
@@ -64,7 +64,7 @@ export function createWebServer(relay: Relay): Server {
   const screenState = () => {
     const l = engine.listing
     const s = engine.state
-    if (!l) return { phase: 'idle', channel: s.channel, lister: [], server_time: now() }
+    if (!l) return { phase: 'idle', channel: s.channel, join_url: `${config.publicBaseUrl}/join`, url_warning: publicUrlProblem(config.publicBaseUrl)?.message ?? null, lister: [], server_time: now() }
     const dots = s.offers
       .filter((o) => o.status === 'valid' || o.status === 'below_floor' || o.status === 'superseded' || o.status === 'accepted')
       .map((o) => ({
@@ -79,7 +79,10 @@ export function createWebServer(relay: Relay): Server {
       listing: publicListing(l),
       channel: s.channel,
       market: s.channel === 'marketplace' ? { ...relay.marketStats(), url: `${config.publicBaseUrl}/market` } : null,
-      qr_url: s.channel === 'qr' && l.approved && l.status !== 'draft' ? `${config.publicBaseUrl}/l/${l.id}` : null,
+      // The QR code encodes the stable /join link, which forwards to whatever listing is current.
+      qr_url: s.channel === 'qr' && l.approved && l.status !== 'draft' ? `${config.publicBaseUrl}/join` : null,
+      join_url: `${config.publicBaseUrl}/join`,
+      url_warning: publicUrlProblem(config.publicBaseUrl)?.message ?? null,
       auction_seconds: config.auctionSeconds,
       offers: dots,
       ticker: s.screen
@@ -123,6 +126,8 @@ export function createWebServer(relay: Relay): Server {
       buyers: s.buyers.map((b) => ({ id: b.id, handle: b.handle, status: b.status, rounds_used: b.rounds_used, session_id: b.session_id ?? null })),
       audit: s.audit.slice(-300),
       public_base_url: config.publicBaseUrl,
+      join_url: `${config.publicBaseUrl}/join`,
+      warnings: [publicUrlProblem(config.publicBaseUrl)?.message].filter((m): m is string => !!m),
     }
   }
 
@@ -133,6 +138,7 @@ export function createWebServer(relay: Relay): Server {
 
     // ----- pages -----
     if (method === 'GET' && path === '/qr-split') return page(res, 'qr-split.html')
+    if (method === 'GET' && path === '/join') return page(res, 'join.html')
     if (method === 'GET' && (path === '/' || path === '/screen')) {
       if (path === '/') return send(res, 302, '', { location: '/screen' })
       return page(res, 'screen.html')
@@ -169,7 +175,7 @@ export function createWebServer(relay: Relay): Server {
     if (method === 'GET' && path === '/api/qr.svg') {
       const l = engine.listing
       if (!l) return send(res, 404, 'No listing.')
-      const svg = await QRCode.toString(`${config.publicBaseUrl}/l/${l.id}`, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' })
+      const svg = await QRCode.toString(`${config.publicBaseUrl}/join`, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' })
       return send(res, 200, svg, { 'content-type': 'image/svg+xml' })
     }
 

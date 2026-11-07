@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snap &amp; Sell · Join</title>
+<style>
+  :root { --bg:#f6f4ef; --card:#fff; --ink:#1d2430; --muted:#667085; --line:#e4e0d6; --accent:#1f6f5c; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14181f; --card:#1c222c; --ink:#eef0f4; --muted:#9aa4b2; --line:#2c3441; --accent:#4cc3a3; } }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--bg); color:var(--ink); font:16px/1.45 system-ui,sans-serif; padding:24px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:28px 24px; max-width:420px; text-align:center; }
+  h1 { font-size:1.3rem; margin:0 0 8px; } p { color:var(--muted); margin:6px 0; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--accent); animation:p 1.2s infinite ease-in-out; margin-right:8px; }
+  @keyframes p { 0%,100% { opacity:.3 } 50% { opacity:1 } }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Snap &amp; Sell</h1>
+  <p id="msg"><span class="dot"></span>Waiting for the seller to list an item…</p>
+  <p>Keep this page open: it takes you to the auction the moment it is ready.</p>
+</div>
+<script>
+(() => {
+  // One stable link for the whole room. It forwards to whatever listing is current, so the QR code can be printed ahead of time.
+  let tries = 0;
+  async function go() {
+    try {
+      const s = await (await fetch('/api/state', { cache: 'no-store' })).json();
+      const l = s.listing;
+      if (s.channel === 'marketplace' && l && l.published) return location.replace('/market');
+      if (l && l.published && l.approved) return location.replace('/l/' + encodeURIComponent(l.id));
+      document.getElementById('msg').lastChild.textContent = l ? 'The seller is getting the item ready…' : 'Waiting for the seller to list an item…';
+    } catch { /* offline for a moment: keep trying */ }
+    tries += 1; setTimeout(go, tries < 30 ? 2000 : 4000);
+  }
+  go();
+})();
+</script>
+</body>
+</html>

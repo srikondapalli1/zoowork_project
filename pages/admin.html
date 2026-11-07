@@ -32,6 +32,7 @@
   <section class="card">
     <div class="row"><h2>Seller console</h2><span class="pill" id="mode"></span><span class="pill" id="status">no listing</span><span class="pill" id="clock"></span></div>
     <div class="muted" id="err"></div>
+    <div id="warn" style="color:var(--bad);font-weight:600"></div>
   </section>
 
   <section class="card">
@@ -134,6 +135,7 @@
     if (!st) return;
     $('mode').textContent = st.mode + ' mode';
     const l = st.listing;
+    $('warn').textContent = (st.warnings || []).join(' ');
     const isMarket = st.channel === 'marketplace';
     $('chQr').className = isMarket ? '' : 'primary'; $('chMarket').className = isMarket ? 'primary' : '';
     const locked = (l && l.status !== 'draft') || st.counts.buyers > 0;

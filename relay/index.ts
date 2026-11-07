@@ -1,7 +1,7 @@
 // Snap & Sell relay: node relay/index.ts
 //   ZOOWORK_MODE=stub  (default) runs the three agents as local code: free, for tests and rehearsal.
 //   ZOOWORK_MODE=live  runs them on ZooWork Managed Agents (needs agents/ids.json and ZOOWORK_API_KEY).
-import { config } from './config.ts'
+import { config, publicUrlProblem } from './config.ts'
 import { LiveIO } from './live.ts'
 import { Relay } from './relay.ts'
 import { StubIO } from './stub.ts'
@@ -25,6 +25,9 @@ server.listen(config.port, () => {
   console.log(`Snap & Sell relay (${config.mode} mode) on port ${config.port}`)
   console.log(`  Big screen : ${base}/screen`)
   console.log(`  Seller     : ${base}/admin?token=${config.adminToken}${config.adminTokenGenerated ? '   (ADMIN_TOKEN was not set: generated for this run)' : ''}`)
+  console.log(`  Room link  : ${base}/join   (the QR code on the big screen points here)`)
+  const problem = publicUrlProblem(base)
+  if (problem) console.warn(`  ${problem.level === 'fail' ? 'WARNING' : 'Note'}: ${problem.message}`)
   console.log(`  Marketplace: ${base}/market   (agent inbox: ${base}/market/inbox?key=${config.marketKey}${config.marketKeyGenerated ? '  (MARKET_KEY generated for this run)' : ''})`)
   if (config.mode === 'stub') console.log('  Agents are local stubs (no ZooWork calls). Set ZOOWORK_MODE=live to use ZooWork Managed Agents.')
   if (!config.zoodataApiKey) console.log('  ZOODATA_API_KEY not set: the Lister will fall back to web_search for retail prices.')
