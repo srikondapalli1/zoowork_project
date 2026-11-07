@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snap &amp; Sell</title>
+<style>
+  :root { --bg:#0f141b; --card:#18202b; --ink:#f1f3f6; --muted:#9aa6b6; --line:#2a3544; --accent:#4cc3a3; --warn:#f0a35e; --band:rgba(76,195,163,.16); --valid:#4cc3a3; --low:#f0a35e; }
+  * { box-sizing: border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:18px/1.35 system-ui,sans-serif; }
+  .wrap { height:100%; padding:16px; display:grid; grid-template-columns:minmax(260px,24%) 1fr minmax(280px,26%); gap:16px; }
+  .col { display:flex; flex-direction:column; gap:12px; min-height:0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; }
+  .grow { flex:1; min-height:0; display:flex; flex-direction:column; }
+  img.photo { width:100%; aspect-ratio:1; object-fit:cover; border-radius:12px; background:var(--line); }
+  h1 { font-size:1.15rem; margin:8px 0 2px; }
+  .muted { color:var(--muted); font-size:.85rem; }
+  .row { display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
+  .clock { font-size:4.2rem; font-weight:800; font-variant-numeric:tabular-nums; line-height:1; }
+  .qr { background:#fff; border-radius:12px; padding:8px; width:min(100%,220px); margin:0 auto; }
+  .qr img { width:100%; display:block; }
+  canvas { width:100% !important; flex:1; min-height:0; }
+  .ticker .line { padding:8px 0; border-bottom:1px solid var(--line); font-size:.95rem; }
+  .ticker .who { color:var(--accent); font-weight:700; }
+  .counters { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; text-align:center; }
+  .counters b { display:block; font-size:1.8rem; font-variant-numeric:tabular-nums; }
+  .feedline { padding:4px 0; border-bottom:1px solid var(--line); font:14px/1.3 ui-monospace,monospace; }
+  .kept { color:var(--accent); } .excl { color:var(--warn); }
+  .banner { text-align:center; padding:20px; border-radius:16px; background:var(--accent); color:#06231b; }
+  .banner .big { font-size:3rem; font-weight:800; }
+  .stats { display:grid; grid-template-columns:repeat(2,1fr); gap:10px 18px; }
+  .stats div b { display:block; font-size:1.4rem; }
+  [hidden] { display:none !important; }
+  @media (max-width: 900px) { .wrap { grid-template-columns:1fr; height:auto; } canvas { min-height:260px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="col">
+    <div class="card">
+      <img class="photo" id="photo" alt="Item photo" hidden>
+      <h1 id="title">Snap &amp; Sell</h1>
+      <div class="muted" id="cond"></div>
+      <div class="row" style="margin-top:6px"><span class="muted">Fair value</span><strong id="band">–</strong></div>
+      <div class="row"><span class="muted">Ask</span><strong id="ask">–</strong></div>
+      <div class="muted" id="excluded"></div>
+    </div>
+    <div class="card"><div class="clock" id="clock">–</div><div class="muted" id="phase"></div></div>
+    <div class="card" id="qrCard" hidden><div class="qr"><img id="qr" alt="QR code to make an offer"></div><div class="muted" style="text-align:center;margin-top:6px">Scan to make an offer</div></div>
+  </div>
+
+  <div class="col">
+    <div class="card grow" id="chartCard" hidden><div class="row"><strong>Offers vs fair value</strong><span class="muted" id="chartNote">Excluded outliers never appear here</span></div><canvas id="chart"></canvas></div>
+    <div class="card grow" id="listerCard"><strong>The Lister is researching</strong><div id="listerFeed" style="overflow:auto;flex:1;min-height:0"></div><div id="comps" style="margin-top:8px"></div></div>
+    <div class="banner" id="winner" hidden><div class="muted" style="color:#06231b">SOLD</div><div class="big" id="winnerText"></div></div>
+    <div class="card" id="statsCard" hidden><div id="summary" style="font-size:1.3rem;font-weight:700;margin-bottom:10px"></div><div class="stats" id="stats"></div></div>
+  </div>
+
+  <div class="col">
+    <div class="card grow ticker"><strong>What the agent is saying</strong><div id="ticker" style="overflow:auto;flex:1;min-height:0"></div></div>
+    <div class="card counters">
+      <div><b id="cBuyers">0</b><span class="muted">buyers</span></div>
+      <div><b id="cOffers">0</b><span class="muted">offers</span></div>
+      <div><b id="cOut">0</b><span class="muted">outliers excluded</span></div>
+    </div>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+(() => {
+  const $ = (s) => document.getElementById(s);
+  const money = (n) => n == null ? '–' : '$' + (Math.round(n * 100) / 100);
+  let chart = null, lastPhoto = '', lastQr = '', lastId = '';
+
+  function ensureChart(S) {
+    if (chart || typeof Chart === 'undefined') return;
+    chart = new Chart($('chart'), {
+      type: 'scatter',
+      data: { datasets: [
+        { label: 'Fair-value high', type: 'line', data: [], borderColor: 'transparent', backgroundColor: 'rgba(76,195,163,.16)', pointRadius: 0, fill: '+1', order: 5 },
+        { label: 'Fair-value low', type: 'line', data: [], borderColor: 'rgba(76,195,163,.5)', borderWidth: 1, pointRadius: 0, fill: false, order: 5 },
+        { label: 'Fair-value mid', type: 'line', data: [], borderColor: 'rgba(241,243,246,.55)', borderDash: [6, 6], borderWidth: 1.5, pointRadius: 0, order: 4 },
+        { label: 'Best valid offer', type: 'line', data: [], borderColor: '#4cc3a3', borderWidth: 3, stepped: true, pointRadius: 0, order: 2 },
+        { label: 'Offers', data: [], order: 1, pointRadius: 7, pointHoverRadius: 9,
+          pointStyle: (c) => (c.raw && c.raw.status === 'below_floor' ? 'triangle' : 'circle'),
+          pointBackgroundColor: (c) => (c.raw && c.raw.status === 'below_floor' ? '#f0a35e' : '#4cc3a3'),
+          pointBorderColor: '#0f141b' },
+      ] },
+      options: {
+        animation: false, maintainAspectRatio: false, responsive: true,
+        scales: {
+          x: { type: 'linear', min: 0, max: S.auction_seconds, title: { display: true, text: 'seconds since open', color: '#9aa6b6' }, grid: { color: '#2a3544' }, ticks: { color: '#9aa6b6' } },
+          y: { min: 0, max: 100, title: { display: true, text: 'dollars', color: '#9aa6b6' }, grid: { color: '#2a3544' }, ticks: { color: '#9aa6b6', callback: (v) => '$' + v } },
+        },
+        plugins: {
+          legend: { labels: { color: '#9aa6b6', filter: (i) => i.text !== 'Fair-value high' } },
+          tooltip: { callbacks: { label: (c) => (c.raw && c.raw.handle ? c.raw.handle + ' · ' : '') + '$' + c.parsed.y } },
+        },
+      },
+    });
+  }
+
+  function paintChart(S) {
+    const L = S.listing; if (!L || !L.fair_value || !L.offer_band) return;
+    ensureChart(S); if (!chart) return;
+    const max = S.auction_seconds, f = L.fair_value;
+    chart.options.scales.x.max = max;
+    chart.options.scales.y.min = Math.floor(L.offer_band.min); chart.options.scales.y.max = Math.ceil(L.offer_band.max); // fixed to the offer band: a troll can't squash it
+    const line = (v) => [{ x: 0, y: v }, { x: max, y: v }];
+    chart.data.datasets[0].data = line(f.high); chart.data.datasets[1].data = line(f.low); chart.data.datasets[2].data = line(f.mid);
+    const offers = S.offers.map((o) => ({ x: o.t, y: o.amount, handle: o.handle, status: o.status }));
+    chart.data.datasets[4].data = offers;
+    let best = 0; const step = [];
+    S.offers.filter((o) => o.status === 'valid').sort((a, b) => a.t - b.t).forEach((o) => { if (o.amount > best) { best = o.amount; step.push({ x: o.t, y: best }); } });
+    if (step.length) step.push({ x: L.status === 'live' ? Math.min(max, max - L.seconds_left) : max, y: best });
+    chart.data.datasets[3].data = step;
+    chart.update();
+  }
+
+  function stat(label, value) { const d = document.createElement('div'); const b = document.createElement('b'); b.textContent = value; const s = document.createElement('span'); s.className = 'muted'; s.textContent = label; d.append(b, s); return d; }
+
+  function paint(S) {
+    const L = S.listing;
+    if (!L) { $('title').textContent = 'Snap & Sell'; $('phase').textContent = 'Waiting for the seller'; return; }
+    if (L.id !== lastId) { lastId = L.id; if (chart) { chart.destroy(); chart = null; } }
+    $('title').textContent = (L.copy && L.copy.title) || 'Researching…';
+    const it = L.item || {};
+    $('cond').textContent = [it.brand, it.size && 'size ' + it.size, it.condition && it.condition.replace(/_/g, ' ')].filter(Boolean).join(' · ');
+    $('band').textContent = L.fair_value ? money(L.fair_value.low) + ' to ' + money(L.fair_value.high) : '–';
+    $('ask').textContent = money(L.ask);
+    $('excluded').textContent = L.comps_excluded ? L.comps_excluded + ' outlier comps excluded' + (L.thin_data ? ' · thin data' : '') : '';
+    if (L.photo_url !== lastPhoto) { lastPhoto = L.photo_url; $('photo').src = L.photo_url; $('photo').hidden = false; }
+    const live = S.phase === 'live';
+    $('clock').textContent = live ? L.seconds_left + 's' : S.phase === 'draft' ? '–' : '0s';
+    $('phase').textContent = { draft: L.approved ? 'Ready to open' : (L.published ? 'Awaiting approval' : 'Researching'), live: 'Auction live', closing: 'Closed: choosing the winner', sold: 'Sold', unsold: 'Ended unsold' }[S.phase] || '';
+    $('qrCard').hidden = !S.qr_url || S.phase === 'sold' || S.phase === 'unsold';
+    if (S.qr_url && S.qr_url !== lastQr) { lastQr = S.qr_url; $('qr').src = '/api/qr.svg?v=' + encodeURIComponent(L.id); }
+
+    const opened = S.phase !== 'draft';
+    $('chartCard').hidden = !opened; $('listerCard').hidden = opened;
+    if (opened) paintChart(S);
+    else {
+      const feed = $('listerFeed'); feed.replaceChildren();
+      S.lister.forEach((e) => { const d = document.createElement('div'); d.className = 'feedline'; d.textContent = e.text; feed.append(d); });
+      feed.scrollTop = feed.scrollHeight;
+      const box = $('comps'); box.replaceChildren();
+      S.comps.kept.forEach((c) => { const d = document.createElement('div'); d.className = 'kept'; d.textContent = 'kept ' + money(c.price) + '  ' + c.title; box.append(d); });
+      S.comps.excluded.forEach((c) => { const d = document.createElement('div'); d.className = 'excl'; d.textContent = 'excluded ' + money(c.price) + '  ' + c.title + ' (' + c.reason + ')'; box.append(d); });
+    }
+
+    const t = $('ticker'); t.replaceChildren();
+    S.ticker.forEach((e) => {
+      const d = document.createElement('div'); d.className = 'line';
+      const w = document.createElement('span'); w.className = 'who'; w.textContent = e.buyer + ' · ' + e.label + (e.amount != null ? ' ' + money(e.amount) : '') + ' · ';
+      const q = document.createElement('span'); q.textContent = e.line;
+      d.append(w, q); t.append(d);
+    });
+    $('cBuyers').textContent = S.counters.buyers; $('cOffers').textContent = S.counters.offers; $('cOut').textContent = S.counters.outliers_excluded;
+
+    $('winner').hidden = !S.winner;
+    if (S.winner) $('winnerText').textContent = S.winner.handle + ' · ' + money(S.winner.amount);
+    $('statsCard').hidden = !S.stats;
+    if (S.stats) {
+      const s = S.stats; $('summary').textContent = s.summary || ''; const g = $('stats'); g.replaceChildren();
+      if (s.final_price != null) {
+        const pct = (n) => (n >= 0 ? '+' : '') + n + '%';
+        g.append(
+          stat('final price', money(s.final_price) + ' (' + pct(s.vs_fair_mid_pct) + ' vs fair mid, ' + pct(s.vs_floor_pct) + ' vs floor)'),
+          stat('agent lift', pct(s.agent_lift_pct)),
+          stat('lowball to best', money(s.lowball_first_avg) + ' → ' + money(s.lowball_best_avg)),
+          stat('buyers / offers', s.buyers_joined + ' joined, ' + s.buyers_offered + ' offered, ' + s.total_offers + ' offers, ' + s.valid_share_pct + '% valid'),
+          stat('rounds', s.avg_rounds + ' counters per buyer'),
+          stat('defenses', s.defenses.outlier_offers + ' outlier offers, ' + s.defenses.outlier_comps + ' outlier comps, ' + s.defenses.rejected + ' rejected'),
+          stat('time to sale', s.time_to_sale_s != null ? s.time_to_sale_s + 's' : '–'),
+          stat('seller net', money(s.seller_net) + ' after ' + Math.round(s.fee_pct * 100) + '% fee'),
+        );
+      }
+    }
+  }
+
+  async function tick() {
+    try { const r = await fetch('/api/state', { cache: 'no-store' }); paint(await r.json()); } catch { /* keep polling */ }
+  }
+  tick(); setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>

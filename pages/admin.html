@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snap &amp; Sell · Seller</title>
+<style>
+  :root { --bg:#f6f4ef; --card:#fff; --ink:#1d2430; --muted:#667085; --line:#e4e0d6; --accent:#1f6f5c; --warn:#b4540a; --bad:#b42318; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14181f; --card:#1c222c; --ink:#eef0f4; --muted:#9aa4b2; --line:#2c3441; --accent:#4cc3a3; --warn:#f0a35e; --bad:#f97066; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.4 system-ui,sans-serif; }
+  main { max-width:720px; margin:0 auto; padding:16px; display:grid; gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; display:grid; gap:8px; }
+  h2 { margin:0; font-size:1rem; }
+  .muted { color:var(--muted); font-size:.88rem; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  button { font:inherit; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--ink); padding:10px 14px; min-height:44px; cursor:pointer; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
+  button.danger { color:var(--bad); }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  textarea, input[type=number] { font:inherit; width:100%; padding:10px; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--ink); }
+  img.thumb { max-width:160px; border-radius:8px; }
+  pre, .feed { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px; max-height:180px; overflow:auto; margin:0; font:12px/1.4 ui-monospace,monospace; white-space:pre-wrap; }
+  table { border-collapse:collapse; width:100%; font-size:.88rem; } td { padding:3px 6px; border-bottom:1px solid var(--line); }
+  .pill { padding:2px 8px; border-radius:99px; border:1px solid var(--line); font-size:.8rem; }
+  .ok { color:var(--accent); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <section class="card">
+    <div class="row"><h2>Seller console</h2><span class="pill" id="mode"></span><span class="pill" id="status">no listing</span><span class="pill" id="clock"></span></div>
+    <div class="muted" id="err"></div>
+  </section>
+
+  <section class="card">
+    <h2>1. Snap the item</h2>
+    <input id="photo" type="file" accept="image/*" capture="environment">
+    <textarea id="desc" rows="2" maxlength="300" placeholder="Type exactly what it is: e.g. Patagonia Better Sweater, men's M, navy, worn about 10 times"></textarea>
+    <input id="floor" type="number" inputmode="decimal" min="1" step="1" placeholder="Optional floor ($). Leave empty to let the relay set it.">
+    <div class="row"><button class="primary" id="create">Create listing</button><button id="rehearsal">Load rehearsal listing</button></div>
+  </section>
+
+  <section class="card" id="listingCard" hidden>
+    <h2>2. Review and approve</h2>
+    <div class="row"><img class="thumb" id="thumb" alt=""><div><strong id="ltitle"></strong><div class="muted" id="ldesc"></div></div></div>
+    <div id="band" class="muted"></div>
+    <div id="comps"></div>
+    <div class="row">
+      <button class="primary" id="approveListing" disabled>Approve listing</button>
+      <button id="open" disabled>Open</button>
+      <button id="close" disabled>Close</button>
+    </div>
+    <h2>Lister stream</h2>
+    <div class="feed" id="lister"></div>
+  </section>
+
+  <section class="card" id="saleCard" hidden>
+    <h2>3. Close the sale</h2>
+    <div id="sale" class="muted"></div>
+    <div class="row">
+      <button class="primary" id="approveSale" disabled>Approve sale</button>
+      <button class="danger" id="force" hidden>Closer stalled: sell to top offer</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Health</h2>
+    <div id="health" class="muted"></div>
+    <div class="row"><button class="danger" id="reset">Reset</button></div>
+  </section>
+</main>
+<script>
+(() => {
+  const token = new URLSearchParams(location.search).get('token') || '';
+  const $ = (s) => document.getElementById(s);
+  const money = (n) => n == null ? '–' : '$' + (Math.round(n * 100) / 100);
+  const H = { 'x-admin-token': token, 'content-type': 'application/json' };
+  let st = null;
+
+  async function call(action, body) {
+    const r = await fetch('/api/admin/' + action, { method: 'POST', headers: H, body: JSON.stringify(body || {}) });
+    let j = null; try { j = await r.json(); } catch {}
+    $('err').textContent = r.ok ? '' : ((j && j.error) || 'Request failed (' + r.status + ')');
+    refresh(); return j;
+  }
+
+  function resizeToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file); const img = new Image();
+      img.onload = () => {
+        const s = Math.min(1, 1280 / Math.max(img.width, img.height));
+        const c = document.createElement('canvas'); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url); resolve(c.toDataURL('image/jpeg', 0.8));
+      };
+      img.onerror = () => reject(new Error('Could not read that image.'));
+      img.src = url;
+    });
+  }
+
+  $('create').onclick = async () => {
+    const f = $('photo').files[0]; const description = $('desc').value.trim();
+    if (!f) { $('err').textContent = 'Take or choose a photo first.'; return; }
+    if (description.length < 3) { $('err').textContent = 'Describe the item first: brand, model, size, condition.'; return; }
+    $('create').disabled = true; $('err').textContent = 'Uploading…';
+    try { await call('create', { photo: await resizeToDataUrl(f), description, floor: $('floor').value || undefined }); }
+    catch (e) { $('err').textContent = e.message; }
+    $('create').disabled = false;
+  };
+  $('rehearsal').onclick = () => call('load-rehearsal');
+  $('approveListing').onclick = () => call('approve-listing');
+  $('open').onclick = () => call('open');
+  $('close').onclick = () => call('close');
+  $('approveSale').onclick = () => call('approve-sale');
+  $('force').onclick = () => call('force-sale');
+  $('reset').onclick = () => { if (confirm('Clear everything for a rerun?')) call('reset'); };
+
+  function row(cells) { const tr = document.createElement('tr'); cells.forEach(([t, c]) => { const td = document.createElement('td'); td.textContent = t; if (c) td.className = c; tr.append(td); }); return tr; }
+
+  function paint() {
+    if (!st) return;
+    $('mode').textContent = st.mode + ' mode';
+    const l = st.listing;
+    $('status').textContent = l ? l.status : 'no listing';
+    $('clock').textContent = l && l.status === 'live' ? st.seconds_left + 's left' : '';
+    $('listingCard').hidden = !l;
+    const pendL = st.approvals.find((a) => a.kind === 'listing');
+    const pendS = st.approvals.find((a) => a.kind === 'sale');
+    if (l) {
+      $('thumb').src = l.photo_url; $('ltitle').textContent = (l.copy && l.copy.title) || 'Waiting for the Lister…';
+      $('ldesc').textContent = l.seller_description;
+      const fv = (pendL && pendL.preview) || (l.published ? { fair: l.fair_value, ask: l.ask, floor: l.floor, offer_band: l.offer_band, kept: l.comps_kept, excluded: l.comps_excluded, thin: l.thin_data } : null);
+      $('band').textContent = fv && fv.fair ? 'Fair value ' + money(fv.fair.low) + ' / ' + money(fv.fair.mid) + ' / ' + money(fv.fair.high) + ' · ask ' + money(fv.ask) + ' · floor ' + money(fv.floor) + ' · offer band ' + money(fv.offer_band.min) + ' to ' + money(fv.offer_band.max) + (fv.thin ? ' · THIN DATA' : '') : (fv && fv.error) || '';
+      const box = $('comps'); box.replaceChildren();
+      if (fv && fv.kept) {
+        const t = document.createElement('table');
+        fv.kept.forEach((c) => t.append(row([['kept', 'ok'], [money(c.price)], [c.title]])));
+        fv.excluded.forEach((e) => t.append(row([['excluded', 'warn'], [money(e.comp.price)], [e.comp.title + ' (' + e.reason + ')']])));
+        box.append(t);
+      }
+      if (pendL && pendL.preview && pendL.preview.item && pendL.preview.item.photo_matches_description === false) {
+        const w = document.createElement('div'); w.className = 'bad'; w.textContent = 'The Lister says the photo does NOT match your description.'; box.prepend(w);
+      }
+      $('approveListing').disabled = !pendL;
+      $('open').disabled = !(l.published && l.approved && l.status === 'draft');
+      $('close').disabled = l.status !== 'live';
+      const feed = $('lister'); feed.replaceChildren(); st.lister.forEach((e) => { const d = document.createElement('div'); d.textContent = new Date(e.ts).toLocaleTimeString() + '  ' + e.text; feed.append(d); }); feed.scrollTop = feed.scrollHeight;
+    }
+    $('saleCard').hidden = !l || !['closing', 'sold', 'unsold'].includes(l.status);
+    if (l) {
+      const p = pendS && pendS.preview;
+      $('sale').textContent = l.status === 'sold' ? 'Sold. The winner is on the big screen.' : l.status === 'unsold' ? 'Ended unsold.' :
+        p ? 'Closer proposes ' + (p.handle || p.buyer_id) + ' at ' + money(p.amount) + (p.is_top_valid_offer ? ' (top valid offer)' : ' (NOT the top valid offer)') + ' · fair mid ' + money(p.fair_value && p.fair_value.mid) + ' · floor ' + money(p.floor) + (p.reason ? ' · ' + p.reason : '') :
+        st.closer_running ? 'The Closer is working…' : 'Waiting for the Closer.';
+      $('approveSale').disabled = !pendS;
+      $('force').hidden = !st.closer_stalled;
+    }
+    const c = st.counts; const t = st.turns;
+    const slow = t.metrics.filter((m) => m.outcome !== 'recorded').length;
+    $('health').textContent = 'Buyers ' + c.buyers + ' · offers ' + c.offers + ' · outliers ' + (c.outlier_offers_low + c.outlier_offers_high) + ' · rejected ' + (c.rejected_schema + c.rejected_rate) + ' · turns in flight ' + t.in_flight + ' (queued ' + t.queued + ') · fallback replies ' + slow + ' · agent events posted ' + c.events_posted;
+  }
+
+  async function refresh() {
+    try {
+      const r = await fetch('/api/admin/state', { headers: H });
+      if (r.status === 401) { $('err').textContent = 'Wrong or missing token in the URL (?token=…).'; return; }
+      st = await r.json(); paint();
+    } catch { /* keep polling */ }
+  }
+  refresh(); setInterval(refresh, 1000);
+})();
+</script>
+</body>
+</html>

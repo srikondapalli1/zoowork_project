@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snap &amp; Sell</title>
+<style>
+  :root { --bg:#f6f4ef; --card:#fff; --ink:#1d2430; --muted:#667085; --line:#e4e0d6; --accent:#1f6f5c; --warn:#b4540a; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14181f; --card:#1c222c; --ink:#eef0f4; --muted:#9aa4b2; --line:#2c3441; --accent:#4cc3a3; --warn:#f0a35e; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.4 system-ui,sans-serif; }
+  main { max-width:480px; margin:0 auto; padding:16px; display:grid; gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; }
+  img { width:100%; border-radius:10px; display:block; background:var(--line); aspect-ratio:1; object-fit:cover; }
+  h1 { font-size:1.15rem; margin:10px 0 2px; }
+  .muted { color:var(--muted); font-size:.9rem; }
+  .row { display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
+  .big { font-size:2rem; font-weight:700; font-variant-numeric:tabular-nums; }
+  button { font:inherit; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--ink); padding:12px; min-height:44px; cursor:pointer; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  input { font:inherit; width:100%; padding:12px; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--ink); font-size:1.4rem; text-align:center; }
+  .quick, .submit { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:8px; }
+  .submit { grid-template-columns:1fr 1fr; }
+  .reply { border-left:4px solid var(--accent); padding-left:10px; }
+  .msg { color:var(--warn); min-height:1.2em; font-size:.9rem; }
+  .win { background:var(--accent); color:#fff; border-radius:14px; padding:14px; text-align:center; font-weight:700; font-size:1.2rem; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <section class="card">
+    <img id="photo" alt="Item photo">
+    <h1 id="title">Loading…</h1>
+    <div class="muted" id="sub"></div>
+    <div class="row" style="margin-top:8px"><span class="muted">Fair value</span><strong id="band">–</strong></div>
+    <div class="row"><span class="muted">Ask</span><strong id="ask">–</strong></div>
+  </section>
+
+  <section class="card" id="joinCard" hidden>
+    <button class="primary" id="join" style="width:100%">Join the auction</button>
+    <div class="msg" id="joinMsg"></div>
+  </section>
+
+  <section id="live" hidden style="display:grid;gap:12px">
+    <div class="card">
+      <div class="row"><span class="muted" id="handle"></span><span class="muted" id="status"></span></div>
+      <div class="row"><span class="big" id="clock">–</span><span><span class="muted">Best offer </span><strong id="best">–</strong></span></div>
+      <div class="muted" id="leader"></div>
+    </div>
+    <div class="card reply" id="replyCard" hidden>
+      <div class="muted">The seller's agent says</div>
+      <div id="reply"></div>
+    </div>
+    <div class="card" id="formCard">
+      <input id="amount" type="text" inputmode="decimal" autocomplete="off" aria-label="Your offer in dollars" placeholder="Your offer ($)">
+      <div class="quick">
+        <button id="minus">− <span class="inc"></span></button>
+        <button id="plus">+ <span class="inc"></span></button>
+        <button id="beat">Beat the best</button>
+      </div>
+      <div class="submit">
+        <button class="primary" id="offer">Offer</button>
+        <button id="final">Final offer</button>
+      </div>
+      <div class="msg" id="msg"></div>
+    </div>
+    <div class="card" id="mine" hidden><div class="muted">Your offers</div><div id="mineList"></div></div>
+  </section>
+
+  <div class="win" id="result" hidden></div>
+  <div class="card" id="notice" hidden></div>
+</main>
+<script>
+(() => {
+  const id = location.pathname.split('/').pop();
+  const $ = (s) => document.getElementById(s);
+  const money = (n) => n == null ? '–' : '$' + (Math.round(n * 100) / 100).toString();
+  let me = null, joined = false, lockedUntil = 0, inc = 1, lastPhoto = '';
+
+  async function api(path, opts) {
+    const r = await fetch('/api/l/' + id + path, Object.assign({ credentials: 'same-origin' }, opts));
+    let body = null; try { body = await r.json(); } catch {}
+    return { status: r.status, body };
+  }
+
+  function paintListing(l) {
+    $('title').textContent = (l.copy && l.copy.title) || 'Listing';
+    const item = l.item || {};
+    $('sub').textContent = [item.brand, item.size && 'size ' + item.size, item.condition && item.condition.replace(/_/g, ' ')].filter(Boolean).join(' · ');
+    $('band').textContent = l.fair_value ? money(l.fair_value.low) + ' to ' + money(l.fair_value.high) : '–';
+    $('ask').textContent = money(l.ask);
+    if (l.photo_url && l.photo_url !== lastPhoto) { lastPhoto = l.photo_url; $('photo').src = l.photo_url; }
+    inc = l.bid_increment || 1;
+    document.querySelectorAll('.inc').forEach((e) => { e.textContent = money(inc); });
+  }
+
+  function paint() {
+    if (!me) return;
+    paintListing(me.listing);
+    $('handle').textContent = me.handle;
+    const st = me.listing.status;
+    $('status').textContent = st === 'draft' ? 'Opens soon' : st === 'live' ? 'Live' : st === 'closing' ? 'Closed' : st === 'sold' ? 'Sold' : 'Ended';
+    const secs = me.listing.seconds_left;
+    $('clock').textContent = st === 'live' ? secs + 's' : st === 'draft' ? '–' : '0s';
+    $('best').textContent = money(me.board.best_valid_offer);
+    $('leader').textContent = me.board.leader_is_you ? "You're leading." : (me.board.best_valid_offer != null ? 'Someone is ahead of you.' : 'No offers yet.');
+    $('replyCard').hidden = !me.reply;
+    if (me.reply) $('reply').textContent = me.reply.line;
+    $('mine').hidden = me.your_offers.length === 0;
+    const list = $('mineList'); list.replaceChildren();
+    me.your_offers.slice(-5).reverse().forEach((o) => {
+      const d = document.createElement('div'); d.className = 'row';
+      const a = document.createElement('span'); a.textContent = money(o.amount) + (o.intent === 'final_offer' ? ' (final)' : '');
+      const s = document.createElement('span'); s.className = 'muted'; s.textContent = o.status.replace(/_/g, ' ');
+      d.append(a, s); list.append(d);
+    });
+    const open = st === 'live' && secs > 0;
+    $('formCard').hidden = st === 'sold' || st === 'unsold';
+    const locked = Date.now() < lockedUntil;
+    ['offer', 'final', 'minus', 'plus', 'beat', 'amount'].forEach((k) => { $(k).disabled = !open || locked; });
+    if (me.result) {
+      $('result').hidden = false;
+      $('result').textContent = me.result.winner ? 'You won at ' + money(me.result.amount) + '!' : 'Sold to ' + me.result.handle + ' at ' + money(me.result.amount) + '.';
+    } else if (st === 'unsold') { $('result').hidden = false; $('result').textContent = 'This one ended unsold.'; }
+    $('notice').hidden = !me.notice;
+    if (me.notice) $('notice').textContent = me.notice;
+  }
+
+  async function poll() {
+    try {
+      if (!joined) {
+        const r = await api('/public');
+        if (r.status === 200) { paintListing(r.body.listing); }
+        const m = await api('/me');
+        if (m.status === 200) { joined = true; me = m.body; $('joinCard').hidden = true; $('live').hidden = false; paint(); }
+        else { $('joinCard').hidden = false; $('title').textContent = (r.body && r.body.listing && r.body.listing.copy && r.body.listing.copy.title) || 'Listing'; }
+      } else {
+        const m = await api('/me');
+        if (m.status === 200) { me = m.body; paint(); }
+      }
+    } catch { /* keep polling */ }
+  }
+
+  $('join').onclick = async () => {
+    $('join').disabled = true;
+    const r = await api('/join', { method: 'POST' });
+    if (r.status === 200 || r.status === 201) { joined = false; await poll(); }
+    else { $('joinMsg').textContent = (r.body && r.body.error) || 'Could not join.'; $('join').disabled = false; }
+  };
+
+  // The amount box only ever holds a number; there is no free-text field on this page.
+  $('amount').addEventListener('input', (e) => { e.target.value = e.target.value.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1').replace(/^(\d*\.\d{0,2}).*$/, '$1'); });
+  const cur = () => parseFloat($('amount').value) || 0;
+  const setAmt = (n) => { $('amount').value = String(Math.max(0, Math.round(n * 100) / 100)); };
+  $('minus').onclick = () => setAmt((cur() || (me && me.board.best_valid_offer) || 0) - inc);
+  $('plus').onclick = () => setAmt((cur() || (me && me.board.best_valid_offer) || 0) + inc);
+  $('beat').onclick = () => setAmt(((me && me.board.best_valid_offer) || 0) + inc);
+
+  async function submit(intent) {
+    const amount = cur();
+    if (!(amount > 0)) { $('msg').textContent = 'Enter a number first.'; return; }
+    lockedUntil = Date.now() + 3000; paint(); setTimeout(paint, 3050);
+    $('msg').textContent = '';
+    const r = await api('/offer', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amount, intent }) });
+    if (r.status === 429) $('msg').textContent = 'Easy there: one offer every few seconds.';
+    else if (r.status === 400) $('msg').textContent = 'Use a number with at most 2 decimals.';
+    else if (r.status === 409) $('msg').textContent = (r.body && r.body.reply) || 'The auction is not taking offers.';
+    else if (r.status === 200 && r.body && r.body.reply) $('msg').textContent = r.body.reply;
+    poll();
+  }
+  $('offer').onclick = () => submit('offer');
+  $('final').onclick = () => submit('final_offer');
+
+  poll(); setInterval(poll, 1000);
+})();
+</script>
+</body>
+</html>
