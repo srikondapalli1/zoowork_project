@@ -193,7 +193,7 @@ export function createWebServer(relay: Relay): Server {
 
     if (method === 'GET' && /^\/photo\/[\w.-]+$/.test(path)) {
       const name = path.slice('/photo/'.length)
-      const file = name === 'rehearsal.svg' ? join(config.dataDir, 'rehearsal', 'photo.svg') : join(config.dataDir, 'photos', name)
+      const file = name === 'rehearsal.svg' ? join(config.rehearsalDir, 'photo.svg') : join(config.dataDir, 'photos', name)
       try {
         const data = await readFile(file)
         return send(res, 200, data, { 'content-type': MIME[extname(name)] ?? 'application/octet-stream', 'cache-control': 'public, max-age=60' })

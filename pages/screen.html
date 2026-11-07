@@ -13,12 +13,12 @@
   .col { display:flex; flex-direction:column; gap:12px; min-height:0; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; }
   .grow { flex:1; min-height:0; display:flex; flex-direction:column; }
-  img.photo { width:100%; aspect-ratio:1; object-fit:cover; border-radius:12px; background:var(--line); }
+  img.photo { width:100%; aspect-ratio:1; max-height:30vh; object-fit:cover; border-radius:12px; background:var(--line); }
   h1 { font-size:1.15rem; margin:8px 0 2px; }
   .muted { color:var(--muted); font-size:.85rem; }
   .row { display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
-  .clock { font-size:4.2rem; font-weight:800; font-variant-numeric:tabular-nums; line-height:1; }
-  .qr { background:#fff; border-radius:12px; padding:8px; width:min(100%,220px); margin:0 auto; }
+  .clock { font-size:clamp(2.6rem,8vh,4.2rem); font-weight:800; font-variant-numeric:tabular-nums; line-height:1; }
+  .qr { background:#fff; border-radius:12px; padding:8px; width:min(100%,24vh); margin:0 auto; }
   .qr img { width:100%; display:block; }
   canvas { width:100% !important; flex:1; min-height:0; }
   .ticker .line { padding:8px 0; border-bottom:1px solid var(--line); font-size:.95rem; }
@@ -79,7 +79,7 @@
       type: 'scatter',
       data: { datasets: [
         { label: 'Fair-value high', type: 'line', data: [], borderColor: 'transparent', backgroundColor: 'rgba(76,195,163,.16)', pointRadius: 0, fill: '+1', order: 5 },
-        { label: 'Fair-value low', type: 'line', data: [], borderColor: 'rgba(76,195,163,.5)', borderWidth: 1, pointRadius: 0, fill: false, order: 5 },
+        { label: 'Fair-value band', type: 'line', data: [], borderColor: 'rgba(76,195,163,.5)', borderWidth: 1, pointRadius: 0, fill: false, order: 5 },
         { label: 'Fair-value mid', type: 'line', data: [], borderColor: 'rgba(241,243,246,.55)', borderDash: [6, 6], borderWidth: 1.5, pointRadius: 0, order: 4 },
         { label: 'Best valid offer', type: 'line', data: [], borderColor: '#4cc3a3', borderWidth: 3, stepped: true, pointRadius: 0, order: 2 },
         { label: 'Offers', data: [], order: 1, pointRadius: 7, pointHoverRadius: 9,
@@ -91,7 +91,7 @@
         animation: false, maintainAspectRatio: false, responsive: true,
         scales: {
           x: { type: 'linear', min: 0, max: S.auction_seconds, title: { display: true, text: 'seconds since open', color: '#9aa6b6' }, grid: { color: '#2a3544' }, ticks: { color: '#9aa6b6' } },
-          y: { min: 0, max: 100, title: { display: true, text: 'dollars', color: '#9aa6b6' }, grid: { color: '#2a3544' }, ticks: { color: '#9aa6b6', callback: (v) => '$' + v } },
+          y: { min: 0, max: 100, title: { display: true, text: 'dollars', color: '#9aa6b6' }, grid: { color: '#2a3544' }, ticks: { color: '#9aa6b6', maxTicksLimit: 8, callback: (v) => '$' + v } },
         },
         plugins: {
           legend: { labels: { color: '#9aa6b6', filter: (i) => i.text !== 'Fair-value high' } },

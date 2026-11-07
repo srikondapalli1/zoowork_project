@@ -140,7 +140,7 @@ export class Relay {
 
   /** Rehearsal listing: a saved, already-priced listing so the demo survives a stalled Lister. */
   async loadRehearsal(): Promise<Listing> {
-    const fixture = JSON.parse(await readFile(join(config.dataDir, 'rehearsal', 'listing.json'), 'utf8')) as {
+    const fixture = JSON.parse(await readFile(join(config.rehearsalDir, 'listing.json'), 'utf8')) as {
       description: string
       item: Item
       retail_anchor: { title: string; url: string; price: number }

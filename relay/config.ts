@@ -29,6 +29,8 @@ export const config = {
   publicBaseUrl: (process.env.PUBLIC_BASE_URL || `http://localhost:${port}`).replace(/\/$/, ''),
   zoodataApiKey: process.env.ZOODATA_API_KEY ?? '',
   dataDir: resolve(process.env.DATA_DIR ?? 'data'),
+  /** Saved rehearsal listing and its photo: shipped with the repo, independent of DATA_DIR. */
+  rehearsalDir: resolve('data/rehearsal'),
   pagesDir: resolve('pages'),
   agentsDir: resolve('agents'),
 }

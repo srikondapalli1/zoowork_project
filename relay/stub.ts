@@ -40,7 +40,7 @@ export class StubIO implements AgentIO {
   }
 
   async startLister(listing: Listing, _photo: Buffer, description: string): Promise<void> {
-    const fixture = JSON.parse(await readFile(join(config.dataDir, 'rehearsal', 'listing.json'), 'utf8'))
+    const fixture = JSON.parse(await readFile(join(config.rehearsalDir, 'listing.json'), 'utf8'))
     const engine = this.relay.engine
     const steps = [
       'image: reading the photo',
