@@ -168,7 +168,9 @@ async function main(): Promise<void> {
     }
     return before
   }
-  await sleep(4000)
+  // The bot's first checks need a quiet relay (they count agent events). Let them finish before the on-camera buyer starts posting.
+  for (const end = Date.now() + 60_000; !botOut.includes('Comp poisoner') && Date.now() < end; ) await sleep(500)
+  await sleep(1500)
   await phone.locator('#join').click({ timeout: 20_000 })
   log('on-camera buyer joined')
   const welcome = await waitReplyChange('', 25_000)
