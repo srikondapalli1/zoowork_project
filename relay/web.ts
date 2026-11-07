@@ -132,6 +132,7 @@ export function createWebServer(relay: Relay): Server {
     const method = req.method ?? 'GET'
 
     // ----- pages -----
+    if (method === 'GET' && path === '/qr-split') return page(res, 'qr-split.html')
     if (method === 'GET' && (path === '/' || path === '/screen')) {
       if (path === '/') return send(res, 302, '', { location: '/screen' })
       return page(res, 'screen.html')

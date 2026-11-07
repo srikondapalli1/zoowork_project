@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "quickstart": "node quickstart.mts",
     "record:marketplace": "node scripts/record-marketplace.ts",
-    "buyers": "node bot/marketplace-buyers.ts"
+    "buyers": "node bot/marketplace-buyers.ts",
+    "record:qr": "node scripts/record-qr.ts"
   },
   "repository": {
     "type": "git",

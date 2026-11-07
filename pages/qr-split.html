@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snap &amp; Sell · Room demo</title>
+<style>
+  :root { --bg:#0f141b; --card:#18202b; --ink:#f1f3f6; --muted:#9aa6b6; --line:#2a3544; --accent:#4cc3a3; --warn:#f0a35e; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; }
+  body { background:var(--bg); color:var(--ink); font:16px/1.35 system-ui,sans-serif; display:flex; flex-direction:column; }
+  header { display:flex; align-items:center; gap:12px; padding:10px 16px; border-bottom:1px solid var(--line); }
+  header b { font-size:1.1rem; }
+  .tag { padding:2px 10px; border-radius:99px; border:1px solid var(--line); font-size:.8rem; color:var(--muted); }
+  .tag.live { color:#06231b; background:var(--accent); border-color:var(--accent); font-weight:700; }
+  .tag.stub { color:#2b1600; background:var(--warn); border-color:var(--warn); font-weight:700; }
+  .panes { flex:1; min-height:0; display:grid; grid-template-columns:minmax(0,24%) minmax(0,52%) minmax(0,24%); gap:12px; padding:12px; }
+  .pane { background:var(--card); border:1px solid var(--line); border-radius:14px; display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+  .pane h2 { margin:0; padding:9px 14px; font-size:.9rem; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; }
+  .pane h2 span { color:var(--muted); font-weight:400; }
+  .box { flex:1; min-height:0; position:relative; overflow:hidden; }
+  iframe { border:0; position:absolute; left:0; top:0; transform-origin:0 0; background:var(--bg); }
+  .phoneWrap { display:flex; align-items:center; justify-content:center; background:#0b0f14; }
+  .phone { position:relative; border:10px solid #2a3340; border-radius:34px; overflow:hidden; background:#f6f4ef; box-shadow:0 8px 30px rgba(0,0,0,.5); }
+  .waiting { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--muted); padding:20px; text-align:center; }
+  [hidden] { display:none !important; }
+  footer { display:flex; gap:22px; padding:8px 16px; border-top:1px solid var(--line); color:var(--muted); font-size:.9rem; flex-wrap:wrap; }
+  footer b { color:var(--ink); font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body>
+<header><b>Snap &amp; Sell</b><span>Room demo: scan, offer, haggle, close</span><span class="tag" id="label">LIVE</span><span class="tag" style="margin-left:auto" id="clock"></span></header>
+<div class="panes">
+  <div class="pane">
+    <h2>Seller console <span>phone, in the presenter's hand</span></h2>
+    <div class="box" id="consoleBox"><iframe id="console" title="Seller console"></iframe></div>
+  </div>
+  <div class="pane">
+    <h2>Big screen <span>what the room sees</span></h2>
+    <div class="box" id="screenBox"><iframe id="screen" src="/screen" title="Big screen"></iframe></div>
+  </div>
+  <div class="pane">
+    <h2>A buyer's phone <span>scanned the QR code</span></h2>
+    <div class="box phoneWrap" id="phoneBox">
+      <div class="phone" id="phoneFrame"><iframe id="phone" title="Buyer phone"></iframe><div class="waiting" id="phoneWait">Waiting for the listing…</div></div>
+    </div>
+  </div>
+</div>
+<footer>
+  <span>Buyers <b id="fBuyers">0</b></span><span>Offers <b id="fOffers">0</b></span><span>Outliers excluded <b id="fOut">0</b></span><span>Rejected <b id="fRej">0</b></span><span id="fStatus"></span>
+</footer>
+<script>
+(() => {
+  const $ = (s) => document.getElementById(s);
+  const q = new URLSearchParams(location.search);
+  const label = q.get('label') || 'LIVE';
+  $('label').textContent = label; $('label').className = 'tag ' + (label.toLowerCase().startsWith('stub') ? 'stub' : 'live');
+  $('console').src = '/admin?token=' + encodeURIComponent(q.get('token') || '');
+
+  // Each page is laid out at its natural width and scaled into its pane.
+  function fitWide(boxId, frameId, vw) {
+    const box = $(boxId), f = $(frameId), k = box.clientWidth / vw;
+    f.style.width = vw + 'px'; f.style.height = (box.clientHeight / k) + 'px'; f.style.transform = 'scale(' + k + ')';
+  }
+  function fitPhone() {
+    const box = $('phoneBox'), frame = $('phoneFrame'), f = $('phone');
+    const VW = 390, VH = 780, border = 10;
+    const k = Math.min((box.clientWidth - 24 - 2 * border) / VW, (box.clientHeight - 24 - 2 * border) / VH);
+    frame.style.width = (VW * k + 2 * border) + 'px'; frame.style.height = (VH * k + 2 * border) + 'px';
+    f.style.width = VW + 'px'; f.style.height = VH + 'px'; f.style.transform = 'scale(' + k + ')';
+  }
+  function fit() { fitWide('consoleBox', 'console', 460); fitWide('screenBox', 'screen', 1280); fitPhone(); }
+  addEventListener('resize', fit); fit(); setTimeout(fit, 400);
+
+  let listingId = '';
+  async function tick() {
+    try {
+      const s = await (await fetch('/api/state', { cache: 'no-store' })).json();
+      if (s.listing && s.listing.id !== listingId && s.listing.published) {
+        listingId = s.listing.id; $('phone').src = '/l/' + listingId; $('phoneWait').hidden = true; setTimeout(fit, 300);
+      }
+      if (s.counters) { $('fBuyers').textContent = s.counters.buyers; $('fOffers').textContent = s.counters.offers; $('fOut').textContent = s.counters.outliers_excluded; $('fRej').textContent = s.counters.rejected; }
+      $('clock').textContent = s.listing && s.phase === 'live' ? s.listing.seconds_left + 's left' : (s.phase || '');
+      $('fStatus').textContent = s.winner ? 'Sold to ' + s.winner.handle : '';
+    } catch { /* keep polling */ }
+  }
+  tick(); setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>

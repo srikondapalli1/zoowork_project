@@ -121,3 +121,14 @@ test('exec guard: finds the command in approval arguments', () => {
   assert.equal(commandOf({ argv: ['node', 'market/b.cjs', 'inbox'] }), 'node market/b.cjs inbox')
   assert.equal(commandOf({ other: 1 }), undefined)
 })
+
+// The seller console shrinks a phone photo in the browser through a blob: image URL; a CSP that blocks it breaks the first step of the demo.
+import { CSP } from '../relay/http.ts'
+
+test('CSP allows the blob: images the seller console uses to shrink a photo, and nothing external', () => {
+  const img = /img-src ([^;]*)/.exec(CSP)?.[1] ?? ''
+  assert.match(img, /\bblob:/)
+  assert.match(img, /\bdata:/)
+  assert.doesNotMatch(img, /https?:|\*/)
+  assert.doesNotMatch(CSP, /cdnjs|unpkg|jsdelivr/, 'no third-party scripts: the big screen must work offline')
+})

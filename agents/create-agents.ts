@@ -189,7 +189,12 @@ async function resource(role: keyof typeof MODELS): Promise<AgentResource> {
 }
 
 const client = createZooworkClient()
-const roles = ['lister', 'negotiator', 'closer', 'responder'] as const
+const allRoles = ['lister', 'negotiator', 'closer', 'responder'] as const
+// --only lister,negotiator,closer: touch just those agents (the QR room flow does not use the Responder).
+const onlyIdx = process.argv.indexOf('--only')
+const only = onlyIdx >= 0 ? String(process.argv[onlyIdx + 1] ?? '').split(',') : undefined
+const roles = only ? allRoles.filter((r) => only.includes(r)) : allRoles
+if (roles.length === 0) throw new Error(`--only must name some of: ${allRoles.join(', ')}`)
 
 // Read-only: confirm each model alias is selectable in this deployment's catalog.
 const catalog = await client.listModels()
