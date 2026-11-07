@@ -65,6 +65,7 @@ export function template(kind: 'outlier', v: { min: number; max: number; mid: nu
 export function template(kind: 'below_counter', v: { counter: number; seconds_left: number }): string
 export function template(kind: 'leading', v: { amount: number; seconds_left: number }): string
 export function template(kind: 'closed'): string
+export function template(kind: 'ack'): string
 export function template(kind: string, v?: Record<string, number>): string {
   const f = (n: number | undefined): string => String(Math.round((n ?? 0) * 100) / 100)
   switch (kind) {
@@ -74,6 +75,8 @@ export function template(kind: string, v?: Record<string, number>): string {
       return `Can't go that low. ${f(v?.counter)} takes it, ${Math.max(0, Math.round(v?.seconds_left ?? 0))}s left.`
     case 'leading':
       return `You're leading at ${f(v?.amount)}. Hold tight, ${Math.max(0, Math.round(v?.seconds_left ?? 0))}s left.`
+    case 'ack':
+      return 'Thanks for the message. Checking and getting right back to you.'
     default:
       return "Auction's closed. Results in a moment."
   }

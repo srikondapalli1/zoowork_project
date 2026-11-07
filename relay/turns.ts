@@ -8,6 +8,8 @@ import type { Buyer, Engine } from './engine.ts'
 export type NegotiatorEvent =
   | { event: 'join' }
   | { event: 'offer'; amount: number; intent: 'offer' | 'final_offer' }
+  // Marketplace: a DM arrived. No buyer text travels in the event; the agent reads the thread in the browser.
+  | { event: 'message'; thread: string; has_offer: boolean }
 
 export interface TurnIO {
   postNegotiator(buyer: Buyer, ev: NegotiatorEvent, seq: number): Promise<void>
@@ -31,6 +33,10 @@ interface TurnState {
   /** Timer for an offer that is still waiting its turn: the buyer is owed a reply within the deadline too. */
   queueTimer?: NodeJS.Timeout | undefined
 }
+
+/** Events that owe the buyer a reply (join does not). */
+const owesReply = (ev: NegotiatorEvent | undefined): boolean => ev?.event === 'offer' || ev?.event === 'message'
+const fallbackKind = (ev: NegotiatorEvent | undefined): 'offer' | 'chat' => (ev?.event === 'message' && !ev.has_offer ? 'chat' : 'offer')
 
 export interface TurnMetric {
   buyer_id: string
@@ -62,6 +68,11 @@ export class TurnManager {
     return this.waiting.length
   }
 
+  /** Marketplace DMs get a longer promise than the QR page: a browser reply takes several model steps. */
+  private deadlineMs(buyerId: string): number {
+    return this.engine.buyerById(buyerId)?.channel === 'market' ? config.marketDeadlineMs : config.turnDeadlineMs
+  }
+
   private state(buyerId: string): TurnState {
     let s = this.st.get(buyerId)
     if (!s) {
@@ -78,7 +89,7 @@ export class TurnManager {
     s.queued = ev
     s.queuedAt = this.now()
     if (s.queueTimer) clearTimeout(s.queueTimer)
-    s.queueTimer = setTimeout(() => this.onQueueDeadline(buyerId), config.turnDeadlineMs)
+    s.queueTimer = setTimeout(() => this.onQueueDeadline(buyerId), this.deadlineMs(buyerId))
     // A running turn that has not answered is about an older offer: the latest offer counts, so stop it
     // rather than make this buyer wait for an answer nobody needs.
     if (s.inFlight && !s.recorded && !s.stale) this.supersede(buyerId, s)
@@ -113,7 +124,7 @@ export class TurnManager {
     buyer.check_fails = 0
     this.running += 1
     this.engine.state.stats.events_posted += 1
-    const remaining = Math.max(0, s.currentAt + config.turnDeadlineMs - this.now())
+    const remaining = Math.max(0, s.currentAt + this.deadlineMs(buyerId) - this.now())
     s.deadline = setTimeout(() => this.onDeadline(buyerId), remaining)
     this.io()
       .postNegotiator(buyer, ev, s.seq)
@@ -139,11 +150,11 @@ export class TurnManager {
   private onQueueDeadline(buyerId: string): void {
     const s = this.state(buyerId)
     s.queueTimer = undefined
-    if (!s.queued || s.queued.event !== 'offer') return
+    if (!s.queued || !owesReply(s.queued)) return
     const buyer = this.engine.buyerById(buyerId)
     if (!buyer) return
-    this.metrics.push({ buyer_id: buyerId, ms: config.turnDeadlineMs, outcome: 'queue_timeout' })
-    this.engine.applyFallback(buyer, this.now())
+    this.metrics.push({ buyer_id: buyerId, ms: this.deadlineMs(buyerId), outcome: 'queue_timeout' })
+    this.engine.applyFallback(buyer, this.now(), fallbackKind(s.queued))
   }
 
   private releaseSlot(s: TurnState): void {
@@ -159,7 +170,7 @@ export class TurnManager {
     s.stale = true
     this.metrics.push({ buyer_id: buyerId, ms: this.now() - s.startedAt, outcome: 'timeout' })
     const buyer = this.engine.buyerById(buyerId)
-    if (buyer && s.current?.event === 'offer') this.engine.applyFallback(buyer, this.now())
+    if (buyer && owesReply(s.current)) this.engine.applyFallback(buyer, this.now(), fallbackKind(s.current))
     if (buyer) this.io().interruptNegotiator(buyer).catch(() => {})
     this.releaseSlot(s)
     // If the interrupt never produces run.finished, free the buyer anyway.
@@ -188,10 +199,13 @@ export class TurnManager {
     if (s.deadline) clearTimeout(s.deadline)
     if (s.guard) clearTimeout(s.guard)
     const buyer = this.engine.buyerById(buyerId)
-    if (!s.recorded && !s.stale && buyer && s.current?.event === 'offer') {
+    if (!s.recorded && !s.stale && buyer && owesReply(s.current)) {
       // The agent finished without recording a reply: send the template rather than leave the buyer hanging.
       this.metrics.push({ buyer_id: buyerId, ms: this.now() - s.startedAt, outcome: 'no_reply' })
-      this.engine.applyFallback(buyer, this.now())
+      this.engine.applyFallback(buyer, this.now(), fallbackKind(s.current))
+    } else if (buyer?.pending_send && !s.stale) {
+      // Marketplace: the agent recorded an approved line but never sent it. Deliver it so the buyer is not left hanging.
+      this.engine.flushPendingSend(buyer, this.now())
     }
     this.releaseSlot(s)
     s.inFlight = false

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snap &amp; Sell · Marketplace demo</title>
+<style>
+  :root { --bg:#0f141b; --card:#18202b; --ink:#f1f3f6; --muted:#9aa6b6; --line:#2a3544; --accent:#4cc3a3; --warn:#f0a35e; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; }
+  body { background:var(--bg); color:var(--ink); font:16px/1.35 system-ui,sans-serif; display:flex; flex-direction:column; }
+  header { display:flex; align-items:center; gap:12px; padding:10px 16px; border-bottom:1px solid var(--line); }
+  header b { font-size:1.1rem; } .tag { padding:2px 10px; border-radius:99px; border:1px solid var(--line); font-size:.8rem; color:var(--muted); }
+  .tag.live { color:#06231b; background:var(--accent); border-color:var(--accent); font-weight:700; } .tag.stub { color:#2b1600; background:var(--warn); border-color:var(--warn); font-weight:700; }
+  .panes { flex:1; min-height:0; display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:12px; }
+  .pane { background:var(--card); border:1px solid var(--line); border-radius:14px; display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+  .pane h2 { margin:0; padding:10px 14px; font-size:.95rem; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; }
+  .pane h2 span { color:var(--muted); font-weight:400; }
+  #frameBox { flex:1; min-height:0; background:#000; display:flex; align-items:center; justify-content:center; }
+  #frame { max-width:100%; max-height:100%; object-fit:contain; }
+  #waiting { color:var(--muted); }
+  #actions { height:150px; overflow:auto; padding:8px 14px; border-top:1px solid var(--line); font:13px/1.35 ui-monospace,monospace; }
+  #actions div { padding:2px 0; border-bottom:1px solid var(--line); } #actions .blocked { color:var(--warn); }
+  iframe { flex:1; border:0; width:100%; background:var(--bg); }
+  footer { display:flex; gap:22px; padding:8px 16px; border-top:1px solid var(--line); color:var(--muted); font-size:.9rem; flex-wrap:wrap; }
+  footer b { color:var(--ink); font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body>
+<header><b>Snap &amp; Sell</b><span>Marketplace channel</span><span class="tag" id="label">LIVE</span><span class="tag" style="margin-left:auto" id="clock"></span></header>
+<div class="panes">
+  <div class="pane">
+    <h2>Agent's browser <span id="where">ZooWork sandbox Chromium</span></h2>
+    <div id="frameBox"><img id="frame" alt="Live view of the agent's browser" hidden><div id="waiting">Waiting for the agent's browser…</div></div>
+    <div id="actions" aria-label="What the agent is doing"></div>
+  </div>
+  <div class="pane">
+    <h2>Seller dashboard <span>offers, fair value, agent replies</span></h2>
+    <iframe id="dash" src="/screen" title="Seller dashboard"></iframe>
+  </div>
+</div>
+<footer>
+  <span>Chats <b id="sThreads">0</b></span><span>Buyer messages <b id="sMsgs">0</b></span>
+  <span>Agent replies <b id="sAgent">0</b></span><span>Automatic replies <b id="sAuto">0</b></span>
+  <span>Median reply <b id="sMed">–</b></span><span>Slowest 10% <b id="sP90">–</b></span>
+</footer>
+<script>
+(() => {
+  const $ = (s) => document.getElementById(s);
+  const q = new URLSearchParams(location.search);
+  const label = q.get('label') || 'LIVE';
+  $('label').textContent = label; $('label').className = 'tag ' + (label.toLowerCase().startsWith('stub') ? 'stub' : 'live');
+  if (q.get('where')) $('where').textContent = q.get('where');
+  const sec = (ms) => (ms == null ? '–' : (ms / 1000).toFixed(1) + 's');
+  let lastActions = '';
+
+  const img = $('frame');
+  img.onload = () => { img.hidden = false; $('waiting').hidden = true; };
+  function frame() { img.src = '/api/market/feed/frame.jpg?t=' + Date.now(); }
+
+  async function tick() {
+    try {
+      const a = await (await fetch('/api/market/feed/actions', { cache: 'no-store' })).json();
+      const sig = JSON.stringify(a.actions.map((x) => x.ts));
+      if (sig !== lastActions) {
+        lastActions = sig; const box = $('actions'); box.replaceChildren();
+        a.actions.forEach((x) => { const d = document.createElement('div'); d.textContent = new Date(x.ts).toLocaleTimeString() + '  ' + x.text; if (/blocked|error/i.test(x.text)) d.className = 'blocked'; box.append(d); });
+        box.scrollTop = box.scrollHeight;
+      }
+      const s = await (await fetch('/api/market/stats', { cache: 'no-store' })).json();
+      $('sThreads').textContent = s.threads; $('sMsgs').textContent = s.buyer_messages; $('sAgent').textContent = s.agent_replies; $('sAuto').textContent = s.auto_replies;
+      $('sMed').textContent = sec(s.median_ms); $('sP90').textContent = sec(s.p90_ms);
+      const st = await (await fetch('/api/state', { cache: 'no-store' })).json();
+      $('clock').textContent = st.listing && st.phase === 'live' ? st.listing.seconds_left + 's left' : (st.phase || '');
+    } catch { /* keep polling */ }
+  }
+  setInterval(frame, 400); setInterval(tick, 1000); frame(); tick();
+})();
+</script>
+</body>
+</html>

@@ -21,6 +21,11 @@ export const config = {
   auctionSeconds: num('AUCTION_SECONDS', 90),
   rateLimitMs: Math.round(3000 / timeScale),
   turnDeadlineMs: num('TURN_DEADLINE_MS', 8000),
+  /** A browser-driven reply takes several model steps, so marketplace DMs get a longer promise. */
+  marketDeadlineMs: num('MARKET_DEADLINE_MS', 12000),
+  /** Scoped key the browser agent uses for the seller inbox and the browser feed. It cannot reach /api/admin. */
+  marketKey: process.env.MARKET_KEY || randomBytes(12).toString('hex'),
+  marketKeyGenerated: !process.env.MARKET_KEY,
   globalTurnCap: num('GLOBAL_TURN_CAP', 30),
   maxBuyers: num('MAX_BUYERS', 150),
   feePct: num('FEE_PCT', 0.1),

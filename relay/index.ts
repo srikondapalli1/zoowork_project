@@ -25,6 +25,7 @@ server.listen(config.port, () => {
   console.log(`Snap & Sell relay (${config.mode} mode) on port ${config.port}`)
   console.log(`  Big screen : ${base}/screen`)
   console.log(`  Seller     : ${base}/admin?token=${config.adminToken}${config.adminTokenGenerated ? '   (ADMIN_TOKEN was not set: generated for this run)' : ''}`)
+  console.log(`  Marketplace: ${base}/market   (agent inbox: ${base}/market/inbox?key=${config.marketKey}${config.marketKeyGenerated ? '  (MARKET_KEY generated for this run)' : ''})`)
   if (config.mode === 'stub') console.log('  Agents are local stubs (no ZooWork calls). Set ZOOWORK_MODE=live to use ZooWork Managed Agents.')
   if (!config.zoodataApiKey) console.log('  ZOODATA_API_KEY not set: the Lister will fall back to web_search for retail prices.')
 })

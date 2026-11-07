@@ -6,8 +6,10 @@ import { join } from 'node:path'
 import sharp from 'sharp'
 import { pickWinner, type Comp } from './book.ts'
 import { checkReply, template } from './check.ts'
+import { parseMessage, sanitizeText } from './market/parse.ts'
+import { BrowserFeed, appendMessage, joinMarketBuyer, threadById } from './market/store.ts'
 import { config } from './config.ts'
-import { Engine, type Buyer, type Copy, type Item, type Listing, type PendingApproval, type State } from './engine.ts'
+import { Engine, type Channel, type Buyer, type Copy, type Item, type Listing, type PendingApproval, type State } from './engine.ts'
 import { TurnManager, type NegotiatorEvent } from './turns.ts'
 
 export type CloserEvent = { event: 'close' }
@@ -34,6 +36,8 @@ export class Relay {
   io!: AgentIO
   readonly turns: TurnManager
   closerRunning = false
+  /** Latest frame and action log pushed by the agent's sandbox browser (marketplace channel). */
+  readonly feed = new BrowserFeed()
   private closeTimer: NodeJS.Timeout | undefined
   private snapTimer: NodeJS.Timeout | undefined
   private dirty = false
@@ -47,6 +51,10 @@ export class Relay {
     this.turns = new TurnManager(this.engine, () => this.io, now)
     this.engine.onChange = () => {
       this.dirty = true
+    }
+    // A template line the relay itself sends (outlier, timeout, unsent approved line) lands in the buyer's DM thread.
+    this.engine.onTemplateReply = (buyer, line, at) => {
+      if (buyer.channel === 'market') appendMessage(this.engine, buyer.id, 'seller', line, 'auto', at)
     }
   }
 
@@ -115,6 +123,7 @@ export class Relay {
     this.closerRunning = false
     this.notifyFails = 0
     await this.io.stop()
+    this.feed.clear()
     this.engine.reset()
   }
 
@@ -291,6 +300,7 @@ export class Relay {
   async joinBuyer(token: string | undefined): Promise<{ buyer: Buyer; created: boolean } | { error: 'full' | 'closed' }> {
     const existing = this.engine.buyerByToken(token)
     if (existing) return { buyer: existing, created: false }
+    if (this.engine.state.channel !== 'qr') return { error: 'closed' } // the room QR is off while the marketplace channel is on
     const res = this.engine.join(this.now())
     if ('error' in res) return res
     this.io.startNegotiator(res).catch((e: unknown) => {
@@ -383,6 +393,118 @@ export class Relay {
     this.notifyFails = 0
     this.applyNotices(SALE_WINNER_TEMPLATE, SALE_OTHERS_TEMPLATE)
     return { ok: true }
+  }
+
+
+  // ---------- channels ----------
+
+  /** Switch between the QR room flow and the marketplace flow. Only before the auction opens. */
+  setChannel(mode: Channel): string | undefined {
+    if (mode !== 'qr' && mode !== 'marketplace') return 'Unknown channel.'
+    const l = this.engine.listing
+    if (l && l.status !== 'draft') return 'The channel can only be changed before the auction opens.'
+    if (this.engine.state.buyers.length > 0) return 'Buyers have already joined: reset first.'
+    this.engine.state.channel = mode
+    this.engine.onChange()
+    return undefined
+  }
+
+  /** A marketplace buyer registers; they get a DM thread and (live) a Responder session. */
+  joinMarket(name: unknown): { buyer: Buyer } | { error: 'full' | 'closed' | 'wrong_channel' } {
+    const res = joinMarketBuyer(this.engine, name, this.now())
+    if ('error' in res) return res
+    this.io.startNegotiator(res).catch((e: unknown) => {
+      console.error(`[market] Responder session failed for ${res.handle}:`, (e as Error).message)
+    })
+    return { buyer: res }
+  }
+
+  /**
+   * A DM from a marketplace buyer. The relay itself finds any price in the text and applies the offer rules;
+   * the agent is only woken, with no text in the event, and reads the thread in its browser.
+   */
+  marketMessage(buyer: Buyer, rawText: unknown): { status: number; body: Record<string, unknown> } {
+    const text = sanitizeText(rawText)
+    if (!text) return { status: 400, body: { error: 'Send {"text": "..."} with 1 to 280 characters.' } }
+    const l = this.engine.listing
+    const now = this.now()
+    if (!l || !l.published) return { status: 409, body: { error: 'No listing.' } }
+    if (buyer.last_msg_at !== undefined && now - buyer.last_msg_at < config.rateLimitMs) {
+      this.engine.noteRejected('rate', now)
+      return { status: 429, body: { error: 'One message every few seconds.' } }
+    }
+    buyer.last_msg_at = now
+    appendMessage(this.engine, buyer.id, 'buyer', text, undefined, now)
+    const auto = (line: string): void => void appendMessage(this.engine, buyer.id, 'seller', line, 'auto', now)
+    const over = l.status === 'closing' || l.status === 'sold' || l.status === 'unsold' || (l.status === 'live' && !!l.closes_at && now >= l.closes_at)
+    if (over) {
+      auto(template('closed'))
+      return { status: 200, body: { ok: true, auto_reply: true } }
+    }
+    const parsed = parseMessage(text)
+    const thread = buyer.thread_id as string
+    if (parsed.amount !== undefined) {
+      if (l.status === 'draft') {
+        auto('Offers open when the sale starts. Send it again then.')
+        return { status: 200, body: { ok: true, auto_reply: true } }
+      }
+      const r = this.engine.submitOffer(buyer, parsed.amount, parsed.intent, now)
+      if (r.kind === 'excluded') return { status: 200, body: { ok: true, auto_reply: true } } // template already in the thread
+      if (r.kind !== 'accepted') return { status: 200, body: { ok: true } }
+      this.turns.enqueue(buyer.id, { event: 'message', thread, has_offer: true })
+      return { status: 200, body: { ok: true } }
+    }
+    this.turns.enqueue(buyer.id, { event: 'message', thread, has_offer: false })
+    return { status: 200, body: { ok: true } }
+  }
+
+  /**
+   * The seller inbox Send button. Only the line record_counter approved for this buyer may go out, so the agent
+   * drives a real UI but cannot put a figure, a floor or a promise of its own into a thread.
+   */
+  marketSellerSend(threadId: string, rawText: unknown): { status: number; body: Record<string, unknown> } {
+    const thread = threadById(this.engine, threadId)
+    const buyer = thread ? this.engine.buyerById(thread.buyer_id) : undefined
+    if (!thread || !buyer) return { status: 404, body: { error: 'No such thread.' } }
+    const text = sanitizeText(rawText)
+    if (!buyer.pending_send) {
+      return { status: 409, body: { error: 'No approved reply is waiting for this thread. Call get_state, then record_counter, then send exactly the line it approves.' } }
+    }
+    if (text !== buyer.pending_send) {
+      return { status: 409, body: { error: `Not the approved reply. Send exactly this text: ${buyer.pending_send}` } }
+    }
+    buyer.pending_send = undefined
+    appendMessage(this.engine, buyer.id, 'seller', text, 'agent', this.now())
+    return { status: 200, body: { ok: true } }
+  }
+
+  /** Reply latency per buyer message across the marketplace, for the dashboard and the recording footer. */
+  marketStats(): { threads: number; buyer_messages: number; agent_replies: number; auto_replies: number; median_ms: number | null; p90_ms: number | null } {
+    const waits: number[] = []
+    let agent = 0
+    let auto = 0
+    for (const t of this.engine.state.threads) {
+      let pendingSince: number | undefined
+      for (const m of t.messages) {
+        if (m.from === 'buyer') pendingSince ??= m.ts
+        else {
+          if (m.kind === 'agent') agent += 1
+          else auto += 1
+          if (pendingSince !== undefined) waits.push(m.ts - pendingSince)
+          pendingSince = undefined
+        }
+      }
+    }
+    waits.sort((a, b) => a - b)
+    const pick = (q: number): number | null => (waits.length ? (waits[Math.min(waits.length - 1, Math.floor(waits.length * q))] as number) : null)
+    return {
+      threads: this.engine.state.threads.length,
+      buyer_messages: this.engine.state.threads.reduce((n, t) => n + t.messages.filter((m) => m.from === 'buyer').length, 0),
+      agent_replies: agent,
+      auto_replies: auto,
+      median_ms: pick(0.5),
+      p90_ms: pick(0.9),
+    }
   }
 
   closedReply(): string {

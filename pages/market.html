@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swapspot Marketplace</title>
+<style>
+  :root { --bg:#f0f2f5; --card:#fff; --ink:#1c1e21; --muted:#65676b; --line:#dddfe2; --blue:#1877f2; --bubble:#e4e6eb; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.4 system-ui,sans-serif; }
+  header { background:var(--card); border-bottom:1px solid var(--line); padding:10px 16px; display:flex; align-items:center; gap:12px; }
+  header b { color:var(--blue); font-size:1.2rem; }
+  header input { flex:1; max-width:420px; border:0; background:var(--bg); border-radius:99px; padding:8px 14px; font:inherit; }
+  .layout { display:grid; grid-template-columns:220px 1fr; max-width:1100px; margin:0 auto; gap:16px; padding:16px; }
+  aside { background:var(--card); border-radius:10px; padding:14px; align-self:start; }
+  aside li { padding:6px 0; color:var(--muted); list-style:none; } aside ul { margin:0; padding:0; }
+  .item { background:var(--card); border-radius:10px; display:grid; grid-template-columns:minmax(220px,360px) 1fr; gap:16px; padding:16px; }
+  .item img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px; background:var(--line); }
+  .price { font-size:1.6rem; font-weight:700; }
+  .chat { margin-top:14px; border:1px solid var(--line); border-radius:10px; padding:10px; }
+  .log { max-height:220px; overflow:auto; display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+  .msg { max-width:80%; padding:6px 12px; border-radius:16px; background:var(--bubble); }
+  .msg.mine { align-self:flex-end; background:var(--blue); color:#fff; }
+  .row { display:flex; gap:8px; } .row input { flex:1; padding:8px 12px; border:1px solid var(--line); border-radius:99px; font:inherit; }
+  button { font:inherit; border:0; border-radius:99px; background:var(--blue); color:#fff; padding:8px 18px; cursor:pointer; }
+  .muted { color:var(--muted); } #note { margin-top:8px; }
+  @media (max-width:760px) { .layout, .item { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header><b>swapspot</b><input aria-label="Search" placeholder="Search Marketplace" disabled><span class="muted">Marketplace</span></header>
+<div class="layout">
+  <aside aria-label="Categories"><strong>Browse</strong><ul><li>Clothing &amp; shoes</li><li>Vintage</li><li>Outerwear</li><li>Accessories</li><li>Free stuff</li></ul></aside>
+  <main>
+    <div class="item" id="item" hidden>
+      <img id="photo" alt="Item photo">
+      <div>
+        <div class="price" id="price"></div>
+        <h1 id="title" style="font-size:1.2rem;margin:4px 0"></h1>
+        <div class="muted" id="desc"></div>
+        <ul id="bullets"></ul>
+        <div class="chat" id="chat" hidden>
+          <div class="log" id="log" role="log"></div>
+          <div class="row"><input id="text" maxlength="280" placeholder="Message the seller… (e.g. Is this still available?)" aria-label="Message the seller"><button id="send">Send</button></div>
+        </div>
+        <div id="note" class="muted"></div>
+      </div>
+    </div>
+    <div id="none" class="muted">No listing yet.</div>
+  </main>
+</div>
+<script>
+(() => {
+  const $ = (s) => document.getElementById(s);
+  let me = null; // { thread_id, buyer_token, handle }
+  const money = (n) => '$' + (Math.round(n * 100) / 100);
+
+  async function loadListing() {
+    const r = await fetch('/api/market/listing'); const j = await r.json();
+    const l = j.listing;
+    $('item').hidden = !l; $('none').hidden = !!l;
+    if (!l) return;
+    $('photo').src = l.photo_url; $('title').textContent = l.title; $('price').textContent = l.ask ? money(l.ask) : '';
+    $('desc').textContent = l.description;
+    const ul = $('bullets'); ul.replaceChildren(); l.bullets.forEach((b) => { const li = document.createElement('li'); li.textContent = b; ul.append(li); });
+    const open = j.channel === 'marketplace';
+    $('chat').hidden = !open;
+    $('note').textContent = open ? '' : 'Messaging is switched off for this listing (the seller is selling in person right now).';
+  }
+
+  async function refreshThread() {
+    if (!me) return;
+    const r = await fetch('/api/market/threads/' + me.thread_id, { headers: { 'x-buyer-token': me.buyer_token } });
+    if (!r.ok) return; const j = await r.json();
+    const log = $('log'); log.replaceChildren();
+    j.thread.messages.forEach((m) => { const d = document.createElement('div'); d.className = 'msg' + (m.from === 'buyer' ? ' mine' : ''); d.textContent = m.text; log.append(d); });
+    log.scrollTop = log.scrollHeight;
+  }
+
+  $('send').onclick = async () => {
+    const text = $('text').value.trim(); if (!text) return;
+    if (!me) {
+      const name = prompt('Your name for this chat?', 'Guest') || 'Guest';
+      const r = await fetch('/api/market/buyers', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) });
+      if (!r.ok) { $('note').textContent = (await r.json()).error || 'Could not start a chat.'; return; }
+      me = await r.json();
+    }
+    const r = await fetch('/api/market/threads/' + me.thread_id + '/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-buyer-token': me.buyer_token }, body: JSON.stringify({ text }) });
+    if (r.status === 429) $('note').textContent = 'One message every few seconds.'; else if (!r.ok) $('note').textContent = 'Could not send that message.'; else { $('note').textContent = ''; $('text').value = ''; }
+    refreshThread();
+  };
+  loadListing(); setInterval(loadListing, 3000); setInterval(refreshThread, 1500);
+})();
+</script>
+</body>
+</html>

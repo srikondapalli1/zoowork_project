@@ -1,5 +1,4 @@
 // Web pages and API. Buyers can only ever send {amount, intent}; nothing a buyer types reaches a model or the screen.
-import { timingSafeEqual } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { extname, join } from 'node:path'
@@ -8,62 +7,9 @@ import { computeFairValue, priceSetup, validateOfferBody, type Comp, type Condit
 import { template } from './check.ts'
 import { config } from './config.ts'
 import type { Buyer, Listing } from './engine.ts'
+import { CSP, HttpError, MIME, parseCookies, readBody, safeEqual, send } from './http.ts'
+import { handleMarket } from './market/web.ts'
 import type { Relay } from './relay.ts'
-
-const CSP =
-  "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
-
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.jpg': 'image/jpeg',
-  '.png': 'image/png',
-}
-
-class HttpError extends Error {
-  status: number
-  constructor(status: number, message: string) {
-    super(message)
-    this.status = status
-  }
-}
-
-function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
-  const isStr = typeof body === 'string' || Buffer.isBuffer(body)
-  res.writeHead(status, {
-    'content-type': isStr ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
-    ...headers,
-  })
-  res.end(isStr ? body : JSON.stringify(body))
-}
-
-async function readBody(req: IncomingMessage, max: number): Promise<string> {
-  const chunks: Buffer[] = []
-  let size = 0
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length
-    if (size > max) throw new HttpError(413, 'Body too large.')
-    chunks.push(chunk as Buffer)
-  }
-  return Buffer.concat(chunks).toString('utf8')
-}
-
-function parseCookies(req: IncomingMessage): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const part of (req.headers.cookie ?? '').split(';')) {
-    const i = part.indexOf('=')
-    if (i > 0) out[part.slice(0, i).trim()] = part.slice(i + 1).trim()
-  }
-  return out
-}
-
-function safeEqual(a: string, b: string): boolean {
-  const x = Buffer.from(a)
-  const y = Buffer.from(b)
-  return x.length === y.length && timingSafeEqual(x, y)
-}
 
 export function createWebServer(relay: Relay): Server {
   const engine = relay.engine
@@ -118,7 +64,7 @@ export function createWebServer(relay: Relay): Server {
   const screenState = () => {
     const l = engine.listing
     const s = engine.state
-    if (!l) return { phase: 'idle', lister: [], server_time: now() }
+    if (!l) return { phase: 'idle', channel: s.channel, lister: [], server_time: now() }
     const dots = s.offers
       .filter((o) => o.status === 'valid' || o.status === 'below_floor' || o.status === 'superseded' || o.status === 'accepted')
       .map((o) => ({
@@ -131,7 +77,9 @@ export function createWebServer(relay: Relay): Server {
     return {
       phase: l.status,
       listing: publicListing(l),
-      qr_url: l.approved && l.status !== 'draft' ? `${config.publicBaseUrl}/l/${l.id}` : null,
+      channel: s.channel,
+      market: s.channel === 'marketplace' ? { ...relay.marketStats(), url: `${config.publicBaseUrl}/market` } : null,
+      qr_url: s.channel === 'qr' && l.approved && l.status !== 'draft' ? `${config.publicBaseUrl}/l/${l.id}` : null,
       auction_seconds: config.auctionSeconds,
       offers: dots,
       ticker: s.screen
@@ -159,6 +107,9 @@ export function createWebServer(relay: Relay): Server {
     const s = engine.state
     return {
       mode: config.mode,
+      channel: s.channel,
+      market_key_hint: s.channel === 'marketplace' ? `${config.publicBaseUrl}/market/inbox?key=${config.marketKey}` : null,
+      market: relay.marketStats(),
       listing: l ?? null,
       approvals: s.approvals,
       closer_stalled: relay.closerStalled,
@@ -307,6 +258,11 @@ export function createWebServer(relay: Relay): Server {
           const l = await relay.loadRehearsal()
           return send(res, 201, { id: l.id })
         }
+        case 'channel': {
+          const body = JSON.parse(await readBody(req, 256)) as { mode?: unknown }
+          const err = relay.setChannel(body.mode as 'qr' | 'marketplace')
+          return send(res, err ? 409 : 200, err ? { error: err } : { ok: true, channel: engine.state.channel })
+        }
         case 'reset':
           await relay.reset()
           return send(res, 200, { ok: true })
@@ -320,6 +276,8 @@ export function createWebServer(relay: Relay): Server {
           return send(res, 404, { error: 'Unknown admin action.' })
       }
     }
+
+    if (await handleMarket(relay, req, res, url)) return
 
     return send(res, 404, 'Not found.')
   }

@@ -5,7 +5,7 @@ import type { Copy, Item } from './engine.ts'
 import type { Relay } from './relay.ts'
 import { zoodataSearch } from './zoodata.ts'
 
-export type Role = 'lister' | 'negotiator' | 'closer'
+export type Role = 'lister' | 'negotiator' | 'responder' | 'closer'
 
 export interface ToolContext {
   buyerId?: string | undefined
@@ -21,6 +21,7 @@ const err = (message: string): ToolResult => ({ value: { error: message }, isErr
 const ALLOWED: Record<Role, readonly string[]> = {
   lister: ['zoodata_search', 'publish_listing'],
   negotiator: ['get_state', 'record_counter'],
+  responder: ['get_state', 'record_counter'], // the marketplace Negotiator: same two tools, plus a browser in its sandbox
   closer: ['get_final_book', 'propose_sale', 'confirm_sale', 'notify'],
 }
 

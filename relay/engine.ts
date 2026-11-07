@@ -80,10 +80,37 @@ export interface Buyer {
   last_submit_at?: number | undefined
   last_counter?: number | undefined
   check_fails: number
+  /** Where this buyer arrived from: the QR page or a marketplace DM thread. */
+  channel?: 'qr' | 'market' | undefined
+  thread_id?: string | undefined
+  last_msg_at?: number | undefined
+  /** Marketplace: the checked line the agent has been approved to send (record_counter sets it, the inbox Send consumes it). */
+  pending_send?: string | undefined
   status: 'active' | 'winner' | 'runner_up' | 'defaulted'
   reply?: { line: string; ts: number; label?: string | undefined; kind: 'agent' | 'template' } | undefined
   notice?: string | undefined
 }
+
+export interface MarketMessage {
+  id: string
+  ts: number
+  from: 'buyer' | 'seller'
+  text: string
+  /** Seller messages: written by the agent through the inbox, or sent by the relay as an automatic template reply. */
+  kind?: 'agent' | 'auto'
+}
+
+export interface MarketThread {
+  id: string
+  buyer_id: string
+  name: string
+  messages: MarketMessage[]
+  /** Buyer messages since the seller last replied. */
+  unread: number
+  last_ts: number
+}
+
+export type Channel = 'qr' | 'marketplace'
 
 export interface Counter {
   buyer_id: string
@@ -91,7 +118,7 @@ export interface Counter {
   round: number
   ts: number
   line: string
-  label: 'countered' | 'held' | 'leading'
+  label: 'countered' | 'held' | 'leading' | 'answered'
 }
 
 export interface ScreenEvent {
@@ -160,6 +187,8 @@ export interface State {
   cursors: Record<string, string>
   lister_session_id?: string | undefined
   closer_session_id?: string | undefined
+  channel: Channel
+  threads: MarketThread[]
 }
 
 const emptyStats = (): Stats => ({
@@ -181,12 +210,22 @@ export const emptyState = (): State => ({
   stats: emptyStats(),
   handle_seq: 0,
   cursors: {},
+  channel: 'qr',
+  threads: [],
 })
 
 const id = (prefix: string): string => `${prefix}_${randomBytes(5).toString('hex')}`
 
 export interface GetStateResult {
-  listing: { title: string; condition: string; fair_value: FairValue; ask: number; offer_band: { min: number; max: number } }
+  listing: {
+    title: string
+    condition: string
+    fair_value: FairValue
+    ask: number
+    offer_band: { min: number; max: number }
+    /** Facts a buyer may ask about. The agent answers questions only from these. */
+    details: Record<string, unknown>
+  }
   buyer: {
     handle: string
     last_offer: number | null
@@ -214,9 +253,14 @@ export class Engine {
   onChange: () => void = () => {}
 
   reset(): void {
+    const channel = this.state.channel // the presenter's channel choice survives a reset
     this.state = emptyState()
+    this.state.channel = channel
     this.onChange()
   }
+
+  /** Marketplace: called when the relay itself (not the agent) must put a template line into a buyer's thread. */
+  onTemplateReply: (buyer: Buyer, line: string, now: number) => void = () => {}
 
   load(raw: State): void {
     this.state = { ...emptyState(), ...raw, stats: { ...emptyStats(), ...raw.stats } }
@@ -452,6 +496,7 @@ export class Engine {
       else this.state.stats.outlier_offers_high += 1
       const reply = template('outlier', { min: band.min, max: band.max, mid: (l.fair_value as FairValue).mid })
       buyer.reply = { line: reply, ts: now, kind: 'template' }
+      this.onTemplateReply(buyer, reply, now)
       this.screen({ type: 'outlier', buyer_handle: buyer.handle, text: 'Outlier excluded' }, now)
       return { kind: 'excluded', offer, reply }
     }
@@ -482,6 +527,7 @@ export class Engine {
         fair_value: l.fair_value as FairValue,
         ask: l.ask as number,
         offer_band: l.offer_band as { min: number; max: number },
+        details: this.listingDetails(),
       },
       buyer: {
         handle: buyer.handle,
@@ -502,6 +548,24 @@ export class Engine {
     }
   }
 
+  listingDetails(): Record<string, unknown> {
+    const l = this.listing
+    if (!l) return {}
+    const it = l.item
+    return {
+      ...(it?.brand ? { brand: it.brand } : {}),
+      ...(it?.model ? { model: it.model } : {}),
+      category: it?.category,
+      color: it?.color,
+      ...(it?.size ? { size: it.size } : {}),
+      condition: it?.condition,
+      ...(it?.material ? { material: it.material } : {}),
+      ...(it?.notes ? { notes: it.notes } : {}),
+      description: l.copy?.description,
+      bullets: l.copy?.bullets,
+    }
+  }
+
   counterFor(buyer: Buyer): number {
     const l = this.listing as Listing
     return suggestedCounter({
@@ -512,6 +576,12 @@ export class Engine {
       bestValid: this.bestValid()?.amount,
       lastCounter: buyer.last_counter,
     })
+  }
+
+  /** Numbers that appear in the listing facts ("size 32", "worn about 10 times"): quoting them is not inventing a price. */
+  private detailNumbers(): number[] {
+    const text = JSON.stringify(this.listingDetails())
+    return [...text.matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0]))
   }
 
   /** Every dollar figure a reply to this buyer may contain. */
@@ -529,6 +599,7 @@ export class Engine {
       l.ask,
       ...mine,
       ...extra,
+      ...this.detailNumbers(),
     ]
     return figs.filter((n): n is number => typeof n === 'number')
   }
@@ -550,10 +621,12 @@ export class Engine {
     const l = this.listing
     if (!l || !l.published) return { ok: false, reason: 'No live listing.' }
     const label = input.label
-    if (label !== 'countered' && label !== 'held' && label !== 'leading') {
-      return { ok: false, reason: 'label must be countered, held or leading.' }
+    const marketAnswer = label === 'answered' && buyer.channel === 'market'
+    if (label !== 'countered' && label !== 'held' && label !== 'leading' && !marketAnswer) {
+      return { ok: false, reason: buyer.channel === 'market' ? 'label must be countered, held, leading or answered.' : 'label must be countered, held or leading.' }
     }
-    const hasOffers = this.buyerOffers(buyer.id).length > 0
+    // "answered" replies to a question without an offer: it uses no round and needs no amount.
+    const hasOffers = this.buyerOffers(buyer.id).length > 0 && !marketAnswer
     const suggested = this.counterFor(buyer)
     const best = this.bestValid()
     let amount: number | undefined
@@ -592,11 +665,15 @@ export class Engine {
     if (!verdict.ok) {
       buyer.check_fails += 1
       if (buyer.check_fails < 2) return { ok: false, reason: verdict.reason ?? 'The reply check failed.' }
-      line = this.fallbackLine(buyer, now)
+      line = marketAnswer ? template('ack') : this.fallbackLine(buyer, now)
       replaced = true
     }
     buyer.check_fails = 0
 
+    if (marketAnswer) {
+      this.state.counters.push({ buyer_id: buyer.id, round: buyer.rounds_used, ts: now, line, label: 'answered' })
+      this.screen({ type: 'counter', buyer_handle: buyer.handle, label: 'answered', agent_line: line }, now)
+    }
     if (hasOffers) {
       if (label === 'countered' && amount !== undefined) {
         this.state.counters.push({ buyer_id: buyer.id, amount, round: buyer.rounds_used, ts: now, line, label })
@@ -611,6 +688,7 @@ export class Engine {
       )
     }
     buyer.reply = { line, ts: now, label, kind: replaced ? 'template' : 'agent' }
+    if (buyer.channel === 'market') buyer.pending_send = line // the inbox Send delivers exactly this line
     this.touch()
     return replaced ? { ok: true, replaced } : { ok: true }
   }
@@ -628,12 +706,24 @@ export class Engine {
     return template('below_counter', { counter: this.counterFor(buyer), seconds_left: secs })
   }
 
-  applyFallback(buyer: Buyer, now: number): string {
-    const line = this.fallbackLine(buyer, now)
+  /** Template reply for a timeout. kind "chat" is for a message with no price in it. */
+  applyFallback(buyer: Buyer, now: number, kind: 'offer' | 'chat' = 'offer'): string {
+    const line = kind === 'chat' ? template('ack') : this.fallbackLine(buyer, now)
     buyer.reply = { line, ts: now, kind: 'template' }
     buyer.check_fails = 0
+    buyer.pending_send = undefined
     this.audit(buyer.handle, line, this.allowedFigures(buyer), true, now)
+    this.onTemplateReply(buyer, line, now)
     this.touch()
+    return line
+  }
+
+  /** Marketplace: the agent finished a turn without sending its approved line; hand it over so the buyer is not left hanging. */
+  flushPendingSend(buyer: Buyer, now: number): string | undefined {
+    const line = buyer.pending_send
+    if (!line) return undefined
+    buyer.pending_send = undefined
+    this.onTemplateReply(buyer, line, now)
     return line
   }
 
