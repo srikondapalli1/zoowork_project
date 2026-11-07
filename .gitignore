@@ -2,3 +2,6 @@ node_modules/
 .env
 .env.*
 !.env.example
+data/state.json
+data/photos/
+agents/ids.json

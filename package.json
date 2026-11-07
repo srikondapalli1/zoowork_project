@@ -1,10 +1,14 @@
 {
-  "name": "zoowork_project",
+  "name": "snap-and-sell",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Snap & Sell: relay service and ZooWork agents",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "relay": "node relay/index.ts",
+    "create-agents": "node agents/create-agents.ts",
+    "bot": "node bot/attack.ts",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "quickstart": "node quickstart.mts"
   },
   "repository": {
     "type": "git",
@@ -18,6 +22,18 @@
   },
   "homepage": "https://github.com/srikondapalli1/zoowork_project#readme",
   "dependencies": {
-    "@zoowork-ai/sdk": "^0.14.0"
+    "@zoowork-ai/sdk": "^0.14.0",
+    "qrcode": "^1.5.4",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/qrcode": "^1.5.6",
+    "typescript": "^5.9.3"
+  },
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.20"
   }
 }
