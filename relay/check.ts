@@ -14,9 +14,9 @@ export interface CheckResult {
 }
 
 // Numbers followed by one of these are not dollar figures ("41s left", "3 seconds", "10%").
-const UNIT_AFTER = /^\s?(?:s\b|sec\b|secs\b|seconds?\b|min\b|mins\b|minutes?\b|%|x\b|st\b|nd\b|rd\b|th\b|rounds?\b|buyers?\b|offers?\b)/i
-// ...and neither are numbers named as a count or position ("round 2", "2 of 4", "Buyer 14").
-const LABEL_BEFORE = /(?:\bround|\brounds|\bof|\bbuyer|\boffer|\bnumber|#)\s*$/i
+const UNIT_AFTER = /^\s?(?:s\b|sec\b|secs\b|seconds?\b|min\b|mins\b|minutes?\b|%|x\b|st\b|nd\b|rd\b|th\b|rounds?\b|buyers?\b|offers?\b|times?\b|wears?\b|inch(?:es)?\b|cm\b|years?\b|yrs?\b|months?\b|days?\b|hours?\b|hrs?\b|pockets?\b|zips?\b|pieces?\b|miles?\b|pm\b)/i
+// ...and neither are numbers named as a count or position ("round 2", "2 of 4", "Buyer 14", "size 10").
+const LABEL_BEFORE = /(?:\bround|\brounds|\bof|\bbuyer|\boffer|\bnumber|\bsize|\bsz|#)\s*$/i
 const NUMBER =/(?:\$\s?)?\d[\d,]*(?:\.\d+)?/g
 
 /** Dollar figures in a line: anything with $ or a bare number that is not a time/count unit. */
