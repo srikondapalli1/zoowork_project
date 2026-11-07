@@ -62,7 +62,7 @@ export interface Listing {
   opens_at?: number
   closes_at?: number
   closed_at?: number
-  paid_at?: number
+  sold_at?: number
   image_urls: string[]
   copy?: Copy
   created_at: number
@@ -104,15 +104,10 @@ export interface ScreenEvent {
   text?: string
 }
 
-export interface Payment {
+export interface Sale {
   buyer_id: string
   amount: number
-  url: string
-  provider: 'stripe' | 'confirm'
-  provider_ref: string
-  created_at: number
-  expires_at: number
-  status: 'pending' | 'paid' | 'expired'
+  ts: number
 }
 
 export interface PendingApproval {
@@ -155,15 +150,16 @@ export interface State {
   approvals: PendingApproval[]
   audit: AuditRow[]
   stats: Stats
-  payment_history: Payment[]
   proposal?: { buyer_id: string; amount: number; reason: string; ts: number } | undefined
   notices?: { winner: string; others: string } | undefined
   closer_summary?: string | undefined
   winner_buyer_id?: string | undefined
   sold_amount?: number | undefined
-  tries: number
+  sale?: Sale | undefined
   handle_seq: number
   cursors: Record<string, string>
+  lister_session_id?: string | undefined
+  closer_session_id?: string | undefined
 }
 
 const emptyStats = (): Stats => ({
@@ -183,8 +179,6 @@ export const emptyState = (): State => ({
   approvals: [],
   audit: [],
   stats: emptyStats(),
-  payment_history: [],
-  tries: 0,
   handle_seq: 0,
   cursors: {},
 })
@@ -647,7 +641,7 @@ export class Engine {
     if (!l || !l.published) return { error: 'No listing.' }
     const offers: Array<{ buyer_id: string; handle: string; amount: number; status: string; ts: number }> = []
     for (const b of this.state.buyers) {
-      const mine = this.buyerOffers(b.id).filter((o) => o.status === 'valid' || o.status === 'below_floor' || o.status === 'unpaid')
+      const mine = this.buyerOffers(b.id).filter((o) => o.status === 'valid' || o.status === 'below_floor')
       if (mine.length === 0) continue
       const top = mine.reduce((a, c) => (c.amount > a.amount || (c.amount === a.amount && c.ts < a.ts) ? c : a))
       offers.push({ buyer_id: b.id, handle: b.handle, amount: top.amount, status: top.status, ts: top.ts })
@@ -666,6 +660,10 @@ export class Engine {
     this.state.proposal = { buyer_id: top.buyer_id, amount: top.amount, reason: String(input.reason ?? '').slice(0, 200), ts: now }
     this.touch()
     return { ok: true }
+  }
+
+  proposalBuyerId(): string | undefined {
+    return this.state.proposal?.buyer_id
   }
 
   /** Check a Closer notify message against the figures the Closer is allowed to quote. */
@@ -704,7 +702,7 @@ export class Engine {
     const firsts = offered.map((p) => (p.mine[0] as Offer).amount)
     const bests = offered.map((p) => Math.max(...p.mine.map((o) => o.amount)))
     const allOffers = s.offers.length
-    const validish = s.offers.filter((o) => o.status === 'valid' || o.status === 'superseded' || o.status === 'accepted' || o.status === 'unpaid').length
+    const validish = s.offers.filter((o) => o.status === 'valid' || o.status === 'superseded' || o.status === 'accepted').length
     const compsExcluded = l.comps_excluded.length
     return {
       final_price: sold,
@@ -724,7 +722,7 @@ export class Engine {
         outlier_comps: compsExcluded,
         rejected: s.stats.rejected_schema + s.stats.rejected_rate,
       },
-      time_to_sale_s: l.opens_at && l.paid_at ? Math.round((l.paid_at - l.opens_at) / 100) / 10 : null,
+      time_to_sale_s: l.opens_at && l.sold_at ? Math.round((l.sold_at - l.opens_at) / 100) / 10 : null,
       fee_pct: config.feePct,
       seller_net: round2(sold * (1 - config.feePct)),
       summary: s.closer_summary ?? `Floor was $${floor}. Sold at $${sold}.`,

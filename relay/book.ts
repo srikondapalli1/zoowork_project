@@ -174,7 +174,6 @@ export type OfferStatus =
   | 'ignored'
   | 'accepted'
   | 'superseded'
-  | 'unpaid'
 
 export interface Offer {
   id: string

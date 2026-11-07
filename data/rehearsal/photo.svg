@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-label="Rehearsal item: navy fleece jacket">
+  <rect width="400" height="400" fill="#eef1f5"/>
+  <path d="M130 90 L200 70 L270 90 L330 150 L305 300 L265 290 L265 345 L135 345 L135 290 L95 300 L70 150 Z" fill="#1f3a5f"/>
+  <path d="M200 70 L200 345" stroke="#c9d3e0" stroke-width="5"/>
+  <rect x="215" y="215" width="42" height="26" rx="4" fill="#2b4c7a"/>
+  <text x="200" y="378" font-family="sans-serif" font-size="16" text-anchor="middle" fill="#5b6675">Rehearsal photo</text>
+</svg>
