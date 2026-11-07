@@ -142,6 +142,15 @@ export function createWebServer(relay: Relay): Server {
     }
     if (method === 'GET' && /^\/l\/[\w-]+$/.test(path)) return page(res, 'buyer.html')
 
+    if (method === 'GET' && path === '/vendor/chart.js') {
+      // Chart.js 4.4.1 (MIT) is served from the relay so the big screen works without internet access.
+      try {
+        return send(res, 200, await readFile(join(config.pagesDir, 'vendor', 'chart.umd.js')), { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'public, max-age=3600' })
+      } catch {
+        return send(res, 404, 'Chart.js missing.')
+      }
+    }
+
     if (method === 'GET' && /^\/photo\/[\w.-]+$/.test(path)) {
       const name = path.slice('/photo/'.length)
       const file = name === 'rehearsal.svg' ? join(config.rehearsalDir, 'photo.svg') : join(config.dataDir, 'photos', name)

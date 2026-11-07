@@ -35,6 +35,15 @@
   </section>
 
   <section class="card">
+    <h2>Channel</h2>
+    <div class="row">
+      <button id="chQr">QR room</button>
+      <button id="chMarket">Marketplace (browser agent)</button>
+    </div>
+    <div class="muted" id="chNote"></div>
+  </section>
+
+  <section class="card">
     <h2>1. Snap the item</h2>
     <input id="photo" type="file" accept="image/*" capture="environment">
     <textarea id="desc" rows="2" maxlength="300" placeholder="Type exactly what it is: e.g. Patagonia Better Sweater, men's M, navy, worn about 10 times"></textarea>
@@ -110,6 +119,8 @@
     $('create').disabled = false;
   };
   $('rehearsal').onclick = () => call('load-rehearsal');
+  $('chQr').onclick = () => call('channel', { mode: 'qr' });
+  $('chMarket').onclick = () => call('channel', { mode: 'marketplace' });
   $('approveListing').onclick = () => call('approve-listing');
   $('open').onclick = () => call('open');
   $('close').onclick = () => call('close');
@@ -123,6 +134,17 @@
     if (!st) return;
     $('mode').textContent = st.mode + ' mode';
     const l = st.listing;
+    const isMarket = st.channel === 'marketplace';
+    $('chQr').className = isMarket ? '' : 'primary'; $('chMarket').className = isMarket ? 'primary' : '';
+    const locked = (l && l.status !== 'draft') || st.counts.buyers > 0;
+    $('chQr').disabled = locked; $('chMarket').disabled = locked;
+    $('chNote').textContent = locked
+      ? 'Locked while buyers are joined or the auction is live. Reset to change it.'
+      : isMarket ? 'Buyers will DM the seller on the Swapspot marketplace; the browser agent replies. The room QR is off.' : 'Buyers scan the QR code on the big screen and send numbers only.';
+    if (isMarket && st.market_key_hint) {
+      const a = document.createElement('a'); a.href = '/split?label=LIVE'; a.target = '_blank'; a.textContent = 'Open the split-screen view';
+      $('chNote').append(' ', a);
+    }
     $('status').textContent = l ? l.status : 'no listing';
     $('clock').textContent = l && l.status === 'live' ? st.seconds_left + 's left' : '';
     $('listingCard').hidden = !l;

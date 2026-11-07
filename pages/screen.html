@@ -47,6 +47,12 @@
       <div class="muted" id="excluded"></div>
     </div>
     <div class="card"><div class="clock" id="clock">–</div><div class="muted" id="phase"></div></div>
+    <div class="card" id="mktCard" hidden>
+      <strong>Listed on Swapspot Marketplace</strong>
+      <div class="muted" id="mktSub"></div>
+      <img id="mktFrame" alt="Live view of the agent's browser" style="width:100%;border-radius:8px;margin-top:8px;background:#000;aspect-ratio:11/6.8;object-fit:cover" hidden>
+      <div class="counters" style="margin-top:8px"><div><b id="mChats">0</b><span class="muted">chats</span></div><div><b id="mAgent">0</b><span class="muted">agent replies</span></div><div><b id="mMed">–</b><span class="muted">median reply</span></div></div>
+    </div>
     <div class="card" id="qrCard" hidden><div class="qr"><img id="qr" alt="QR code to make an offer"></div><div class="muted" style="text-align:center;margin-top:6px">Scan to make an offer</div></div>
   </div>
 
@@ -66,7 +72,7 @@
     </div>
   </div>
 </div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="/vendor/chart.js"></script>
 <script>
 (() => {
   const $ = (s) => document.getElementById(s);
@@ -134,7 +140,15 @@
     const live = S.phase === 'live';
     $('clock').textContent = live ? L.seconds_left + 's' : S.phase === 'draft' ? '–' : '0s';
     $('phase').textContent = { draft: L.approved ? 'Ready to open' : (L.published ? 'Awaiting approval' : 'Researching'), live: 'Auction live', closing: 'Closed: choosing the winner', sold: 'Sold', unsold: 'Ended unsold' }[S.phase] || '';
-    $('qrCard').hidden = !S.qr_url || S.phase === 'sold' || S.phase === 'unsold';
+    const ended = S.phase === 'sold' || S.phase === 'unsold';
+    $('qrCard').hidden = !S.qr_url || ended;
+    $('mktCard').hidden = !S.market || ended || S.phase === 'draft' && !L.approved;
+    if (S.market) {
+      $('mktSub').textContent = 'Buyers message the seller in the marketplace inbox; the agent replies in its browser.';
+      $('mChats').textContent = S.market.threads; $('mAgent').textContent = S.market.agent_replies;
+      $('mMed').textContent = S.market.median_ms == null ? '–' : (S.market.median_ms / 1000).toFixed(1) + 's';
+      const f = $('mktFrame'); f.onload = () => { f.hidden = false; }; f.src = '/api/market/feed/frame.jpg?t=' + Date.now();
+    }
     if (S.qr_url && S.qr_url !== lastQr) { lastQr = S.qr_url; $('qr').src = '/api/qr.svg?v=' + encodeURIComponent(L.id); }
 
     const opened = S.phase !== 'draft';

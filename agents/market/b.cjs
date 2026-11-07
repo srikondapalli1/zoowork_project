@@ -32,7 +32,7 @@ async function daemon() {
   try { pw = require('playwright-core') } catch { pw = require('playwright') }
   if (!cfg.base || !cfg.key) throw new Error('market/config.json needs base and key')
   const browser = await pw.chromium.launch({ headless: true, args: ['--no-sandbox'], ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}) })
-  const context = await browser.newContext({ viewport: { width: 1100, height: 680 } })
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } })
   const pages = new Map()
   let active = null
   let activeAt = 0

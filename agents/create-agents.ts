@@ -17,9 +17,10 @@ const MODELS = {
   lister: process.env.LISTER_MODEL ?? 'litellm/claude-opus-5-5', // strong vision model
   negotiator: process.env.NEGOTIATOR_MODEL ?? 'litellm/claude-haiku-5-5', // fast, cheap
   closer: process.env.CLOSER_MODEL ?? 'litellm/claude-sonnet-5-5', // mid
+  responder: process.env.RESPONDER_MODEL ?? 'litellm/claude-sonnet-5-5', // marketplace: multi-step browser work
 } as const
 
-const THINKING: Record<keyof typeof MODELS, ThinkingLevel> = { lister: 'low', negotiator: 'off', closer: 'low' }
+const THINKING: Record<keyof typeof MODELS, ThinkingLevel> = { lister: 'low', negotiator: 'off', closer: 'low', responder: 'low' }
 
 // Built-in tools the Negotiator and Closer never need. They only call the relay's custom tools.
 const NO_BUILTINS = ['read', 'write', 'edit', 'apply_patch', 'exec', 'process', 'web_fetch', 'web_search', 'web_image_search', 'image', 'pdf', 'artifact_publish', 'agent_db', 'cron', 'message']
@@ -107,6 +108,17 @@ const tools: Record<string, CustomToolDeclaration> = {
       properties: { amount: { type: 'number' }, label: { enum: ['countered', 'held', 'leading'] }, line: { type: 'string', maxLength: 220 } },
     },
   },
+  responder_record_counter: {
+    name: 'record_counter',
+    description:
+      'Record your reply to this buyer BEFORE sending it. label is countered (include amount >= suggested_counter), held (all rounds used; restate your last price), leading (this buyer has the best valid offer) or answered (the buyer asked a question with no price: no round is used and no amount is needed). line is the exact text you will send: under 220 characters, no links or markup, and every dollar figure must come from get_state. Returns {ok, min_allowed?, reason?}. If ok is false, fix the line or amount using the reason and call it again. Only the line it approves can be sent.',
+    input_schema: {
+      type: 'object',
+      required: ['label', 'line'],
+      additionalProperties: false,
+      properties: { amount: { type: 'number' }, label: { enum: ['countered', 'held', 'leading', 'answered'] }, line: { type: 'string', maxLength: 220 } },
+    },
+  },
   get_final_book: {
     name: 'get_final_book',
     description:
@@ -155,7 +167,9 @@ async function resource(role: keyof typeof MODELS): Promise<AgentResource> {
       ? [tools.zoodata_search, tools.publish_listing]
       : role === 'negotiator'
         ? [tools.get_state, tools.record_counter]
-        : [tools.get_final_book, tools.propose_sale, tools.confirm_sale, tools.notify]
+        : role === 'responder'
+          ? [tools.get_state, tools.responder_record_counter]
+          : [tools.get_final_book, tools.propose_sale, tools.confirm_sale, tools.notify]
   return {
     name: `snap-sell-${role}`,
     model: { primary: MODELS[role], thinking: THINKING[role], ...(role === 'negotiator' ? { max_tokens: 600 } : {}) },
@@ -166,13 +180,16 @@ async function resource(role: keyof typeof MODELS): Promise<AgentResource> {
         ? { deny: ['write', 'edit', 'apply_patch', 'process', 'pdf', 'artifact_publish', 'agent_db', 'cron', 'message'], permissions: { publish_listing: 'always_ask' } }
         : role === 'closer'
           ? { deny: NO_BUILTINS, permissions: { confirm_sale: 'always_ask' } }
-          : { deny: NO_BUILTINS },
+          : role === 'responder'
+            ? // exec stays available for the browser helper only: every call waits for the relay, which approves just the three helper commands.
+              { deny: NO_BUILTINS.filter((t) => t !== 'exec'), permissions: { exec: 'always_ask' } }
+            : { deny: NO_BUILTINS },
     labels: { app: 'snap-and-sell', role },
   } as AgentResource
 }
 
 const client = createZooworkClient()
-const roles = ['lister', 'negotiator', 'closer'] as const
+const roles = ['lister', 'negotiator', 'closer', 'responder'] as const
 
 // Read-only: confirm each model alias is selectable in this deployment's catalog.
 const catalog = await client.listModels()

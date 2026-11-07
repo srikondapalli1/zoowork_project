@@ -8,7 +8,9 @@
     "bot": "node bot/attack.ts",
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "quickstart": "node quickstart.mts"
+    "quickstart": "node quickstart.mts",
+    "record:marketplace": "node scripts/record-marketplace.ts",
+    "buyers": "node bot/marketplace-buyers.ts"
   },
   "repository": {
     "type": "git",

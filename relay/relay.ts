@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import sharp from 'sharp'
 import { pickWinner, type Comp } from './book.ts'
 import { checkReply, template } from './check.ts'
+import { checkExecCommand, commandOf } from './market/exec-guard.ts'
 import { parseMessage, sanitizeText } from './market/parse.ts'
 import { BrowserFeed, appendMessage, joinMarketBuyer, threadById } from './market/store.ts'
 import { config } from './config.ts'
@@ -23,6 +24,8 @@ export interface AgentIO {
   startCloser(listing: Listing): Promise<void>
   postCloser(ev: CloserEvent): Promise<void>
   resolveApproval(approvalId: string, decision: 'allow-once' | 'deny'): Promise<void>
+  /** Marketplace: put the browser helper into the Responder's sandbox and start its Chromium before the first DM. */
+  prepareMarket?(): Promise<void>
   stop(): Promise<void>
 }
 
@@ -43,6 +46,8 @@ export class Relay {
   private dirty = false
   private approvalHandlers = new Map<string, (d: Decision) => Promise<void> | void>()
   private notifyFails = 0
+  /** exec calls the relay refused (anything but the three browser-helper commands). */
+  commandsBlocked = 0
 
   private now: () => number
 
@@ -194,6 +199,18 @@ export class Relay {
 
   /** Live path: the platform paused a tool call for approval. */
   onPlatformApproval(p: { approvalId: string; toolName: string; args: Record<string, unknown> }): void {
+    if (p.toolName.endsWith('exec')) {
+      // The marketplace agent may run only the browser helper. Everything else is refused before it runs.
+      const cmd = commandOf(p.args)
+      const verdict = cmd === undefined ? ({ ok: false, reason: 'could not read the command' } as const) : checkExecCommand(cmd)
+      if (!verdict.ok) {
+        this.commandsBlocked += 1
+        this.feed.push(undefined, `Blocked a command the agent tried to run: ${verdict.reason}`, this.now())
+        console.warn(`[guard] denied exec: ${(cmd ?? '').slice(0, 120)} (${verdict.reason})`)
+      }
+      void this.io.resolveApproval(p.approvalId, verdict.ok ? 'allow-once' : 'deny').catch(() => {})
+      return
+    }
     const kind = p.toolName.endsWith('publish_listing') ? 'listing' : p.toolName.endsWith('confirm_sale') ? 'sale' : undefined
     if (!kind) {
       // Any other tool that asks for approval is outside this demo's policy.
@@ -257,6 +274,7 @@ export class Relay {
   open(): string | undefined {
     const err = this.engine.open(this.now())
     if (err) return err
+    if (this.engine.state.channel === 'marketplace') this.io.prepareMarket?.().catch(() => {})
     this.armCloseTimer((this.engine.listing as Listing).closes_at as number)
     return undefined
   }
@@ -406,6 +424,7 @@ export class Relay {
     if (this.engine.state.buyers.length > 0) return 'Buyers have already joined: reset first.'
     this.engine.state.channel = mode
     this.engine.onChange()
+    if (mode === 'marketplace') this.io.prepareMarket?.().catch((e: unknown) => this.feed.push(undefined, `Browser warm-up failed: ${(e as Error).message}`, this.now()))
     return undefined
   }
 
@@ -479,7 +498,7 @@ export class Relay {
   }
 
   /** Reply latency per buyer message across the marketplace, for the dashboard and the recording footer. */
-  marketStats(): { threads: number; buyer_messages: number; agent_replies: number; auto_replies: number; median_ms: number | null; p90_ms: number | null } {
+  marketStats(): { threads: number; buyer_messages: number; agent_replies: number; auto_replies: number; median_ms: number | null; p90_ms: number | null; commands_blocked: number } {
     const waits: number[] = []
     let agent = 0
     let auto = 0
@@ -504,6 +523,7 @@ export class Relay {
       auto_replies: auto,
       median_ms: pick(0.5),
       p90_ms: pick(0.9),
+      commands_blocked: this.commandsBlocked,
     }
   }
 

@@ -10,7 +10,16 @@
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["relay", "agents", "bot", "test", "quickstart.mts"]
+  "include": [
+    "relay",
+    "agents",
+    "bot",
+    "test",
+    "quickstart.mts",
+    "scripts"
+  ]
 }

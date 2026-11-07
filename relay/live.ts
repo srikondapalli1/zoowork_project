@@ -24,6 +24,8 @@ export interface AgentIds {
   lister: string
   negotiator: string
   closer: string
+  /** The marketplace browser agent; only needed when the marketplace channel is used. */
+  responder?: string
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -46,6 +48,7 @@ export class LiveIO implements AgentIO {
   private handledCalls = new Set<string>()
   private approvalAgent = new Map<string, string>()
   private closerText = ''
+  private marketReady: Promise<void> | undefined
 
   constructor(relay: Relay) {
     this.relay = relay
@@ -177,30 +180,65 @@ export class LiveIO implements AgentIO {
     if (receipt.events[0]?.accepted !== true) throw new Error('The Lister did not accept the message.')
   }
 
+  /** The agent that talks to this buyer: the Responder (browser) for marketplace DMs, the Negotiator for the QR page. */
+  private agentFor(buyer: Buyer): string {
+    if (buyer.channel === 'market') {
+      if (!this.ids.responder) throw new Error('agents/ids.json has no responder. Run `npm run create-agents` to create it.')
+      return this.ids.responder
+    }
+    return this.ids.negotiator
+  }
+
   async startNegotiator(buyer: Buyer): Promise<void> {
+    const market = buyer.channel === 'market'
+    const agentId = this.agentFor(buyer)
     const ready = (async () => {
-      const session = await this.client.createSession(this.ids.negotiator, { metadata: { buyer_id: buyer.id } }, `neg-${buyer.id}`)
+      const session = await this.client.createSession(agentId, { metadata: { buyer_id: buyer.id } }, `${market ? 'resp' : 'neg'}-${buyer.id}`)
       buyer.session_id = session.session_id
-      this.startPump('negotiator', this.ids.negotiator, session.session_id, buyer.id)
+      this.startPump(market ? 'responder' : 'negotiator', agentId, session.session_id, buyer.id)
       return session.session_id
     })()
     this.negotiatorReady.set(buyer.id, ready)
     await ready
-    this.relay.turns.enqueue(buyer.id, { event: 'join' })
+    if (!market) this.relay.turns.enqueue(buyer.id, { event: 'join' }) // marketplace buyers have no join turn: their first DM wakes the Responder
+  }
+
+  /**
+   * Put the browser helper and its settings into the Responder's sandbox and start Chromium, so the first DM
+   * does not pay a cold start. The sandbox reaches the marketplace through PUBLIC_BASE_URL.
+   */
+  prepareMarket(): Promise<void> {
+    this.marketReady ??= (async () => {
+      const agentId = this.ids.responder
+      if (!agentId) throw new Error('no responder agent: run `npm run create-agents`')
+      const feed = this.relay.feed
+      if (/localhost|127\.0\.0\.1/.test(config.publicBaseUrl)) {
+        feed.push(undefined, 'PUBLIC_BASE_URL is localhost: the ZooWork sandbox cannot reach it. Start a tunnel and set PUBLIC_BASE_URL.', Date.now())
+      }
+      feed.push(undefined, 'Preparing the agent\'s browser in its sandbox', Date.now())
+      await this.client.uploadFile(agentId, 'market/b.cjs', await readFile(join(config.agentsDir, 'market', 'b.cjs'), 'utf8'))
+      await this.client.uploadFile(agentId, 'market/config.json', JSON.stringify({ base: config.publicBaseUrl, key: config.marketKey }))
+      const r = await this.client.exec(agentId, ['node', 'market/b.cjs', 'inbox'])
+      feed.push(undefined, r.exit_code === 0 ? 'The agent\'s browser is ready' : `Browser warm-up exited ${r.exit_code}: ${r.stderr.slice(0, 120) || r.stdout.slice(0, 120)}`, Date.now())
+    })().catch((e: unknown) => {
+      this.marketReady = undefined // let the next attempt retry
+      throw e
+    })
+    return this.marketReady
   }
 
   async postNegotiator(buyer: Buyer, ev: NegotiatorEvent, _seq: number): Promise<void> {
     const sessionId = await (this.negotiatorReady.get(buyer.id) ?? Promise.resolve(buyer.session_id))
     if (!sessionId) throw new Error('No Negotiator session for this buyer.')
-    const receipt = await this.client.postEvents(this.ids.negotiator, sessionId, [
+    const receipt = await this.client.postEvents(this.agentFor(buyer), sessionId, [
       { type: 'user.message', content: JSON.stringify(ev), idempotency_key: randomUUID() },
     ])
-    if (receipt.events[0]?.accepted !== true) throw new Error('The Negotiator did not accept the event.')
+    if (receipt.events[0]?.accepted !== true) throw new Error('The agent did not accept the event.')
   }
 
   async interruptNegotiator(buyer: Buyer): Promise<void> {
     if (!buyer.session_id) return
-    await this.client.postEvents(this.ids.negotiator, buyer.session_id, [{ type: 'user.interrupt' }])
+    await this.client.postEvents(this.agentFor(buyer), buyer.session_id, [{ type: 'user.interrupt' }])
   }
 
   async startCloser(listing: Listing): Promise<void> {
@@ -231,5 +269,6 @@ export class LiveIO implements AgentIO {
     this.pumps.clear()
     this.negotiatorReady.clear()
     this.handledCalls.clear()
+    this.marketReady = undefined
   }
 }

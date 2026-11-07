@@ -16,12 +16,13 @@
   .pane { background:var(--card); border:1px solid var(--line); border-radius:14px; display:flex; flex-direction:column; min-height:0; overflow:hidden; }
   .pane h2 { margin:0; padding:10px 14px; font-size:.95rem; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; }
   .pane h2 span { color:var(--muted); font-weight:400; }
-  #frameBox { flex:1; min-height:0; background:#000; display:flex; align-items:center; justify-content:center; }
-  #frame { max-width:100%; max-height:100%; object-fit:contain; }
+  #frameBox { flex:0 0 auto; background:var(--card); display:flex; align-items:center; justify-content:center; }
+  #frame { width:100%; display:block; aspect-ratio:16/9; object-fit:contain; background:#fff; }
   #waiting { color:var(--muted); }
-  #actions { height:150px; overflow:auto; padding:8px 14px; border-top:1px solid var(--line); font:13px/1.35 ui-monospace,monospace; }
+  #actions { flex:1; min-height:120px; overflow:auto; padding:8px 14px; border-top:1px solid var(--line); font:13px/1.35 ui-monospace,monospace; }
   #actions div { padding:2px 0; border-bottom:1px solid var(--line); } #actions .blocked { color:var(--warn); }
-  iframe { flex:1; border:0; width:100%; background:var(--bg); }
+  .dashbox { flex:1; min-height:0; overflow:hidden; position:relative; }
+  iframe { border:0; background:var(--bg); position:absolute; left:0; top:0; transform-origin:0 0; }
   footer { display:flex; gap:22px; padding:8px 16px; border-top:1px solid var(--line); color:var(--muted); font-size:.9rem; flex-wrap:wrap; }
   footer b { color:var(--ink); font-variant-numeric:tabular-nums; }
 </style>
@@ -36,7 +37,7 @@
   </div>
   <div class="pane">
     <h2>Seller dashboard <span>offers, fair value, agent replies</span></h2>
-    <iframe id="dash" src="/screen" title="Seller dashboard"></iframe>
+    <div class="dashbox" id="dashbox"><iframe id="dash" src="/screen" title="Seller dashboard"></iframe></div>
   </div>
 </div>
 <footer>
@@ -74,6 +75,12 @@
       $('clock').textContent = st.listing && st.phase === 'live' ? st.listing.seconds_left + 's left' : (st.phase || '');
     } catch { /* keep polling */ }
   }
+  // The dashboard is designed for a wide screen: lay it out at 1280 px and scale it to fit its pane.
+  function fit() {
+    const box = $('dashbox'), f = $('dash'), k = box.clientWidth / 1280;
+    f.style.width = '1280px'; f.style.height = (box.clientHeight / k) + 'px'; f.style.transform = 'scale(' + k + ')';
+  }
+  addEventListener('resize', fit); fit(); setTimeout(fit, 500);
   setInterval(frame, 400); setInterval(tick, 1000); frame(); tick();
 })();
 </script>
