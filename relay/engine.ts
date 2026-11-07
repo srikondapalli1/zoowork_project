@@ -405,8 +405,12 @@ export class Engine {
     return this.state.offers.filter((o) => o.status === 'valid')
   }
 
+  /** The best offer on the board. After the sale the winning offer is 'accepted', and it still counts. */
   bestValid(): Offer | undefined {
-    return pickWinner(this.liveValidOffers())
+    const live = this.state.offers
+      .filter((o) => o.status === 'valid' || o.status === 'accepted')
+      .map((o): Offer => ({ ...o, status: 'valid' }))
+    return pickWinner(live)
   }
 
   // ---------- offers ----------

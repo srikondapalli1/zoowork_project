@@ -229,6 +229,7 @@ test('only the top valid offer can be proposed, and the sale needs the presenter
   assert.equal(relay.engine.state.sold_amount, 80)
   assert.equal(relay.engine.buyerById(b.id)?.status, 'winner')
   assert.equal(relay.engine.buyerById(a.id)?.status, 'runner_up')
+  assert.equal(relay.engine.bestValid()?.amount, 80, 'the board still shows the winning offer after the sale')
   const stats = relay.engine.computeStats() as { final_price: number; floor: number }
   assert.equal(stats.final_price, 80)
   await relay.stop()

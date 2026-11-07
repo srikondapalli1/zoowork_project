@@ -158,8 +158,8 @@
       $('force').hidden = !st.closer_stalled;
     }
     const c = st.counts; const t = st.turns;
-    const slow = t.metrics.filter((m) => m.outcome !== 'recorded').length;
-    $('health').textContent = 'Buyers ' + c.buyers + ' · offers ' + c.offers + ' · outliers ' + (c.outlier_offers_low + c.outlier_offers_high) + ' · rejected ' + (c.rejected_schema + c.rejected_rate) + ' · turns in flight ' + t.in_flight + ' (queued ' + t.queued + ') · fallback replies ' + slow + ' · agent events posted ' + c.events_posted;
+    const slow = t.metrics.filter((m) => ['timeout', 'no_reply', 'queue_timeout'].includes(m.outcome)).length;
+    $('health').textContent = 'Buyers ' + c.buyers + ' · offers ' + c.offers + ' · outliers ' + (c.outlier_offers_low + c.outlier_offers_high) + ' · rejected ' + (c.rejected_schema + c.rejected_rate) + ' · turns in flight ' + t.in_flight + ' (queued ' + t.queued + ') · template fallbacks ' + slow + ' · stale turns interrupted ' + t.metrics.filter((m) => m.outcome === 'superseded').length + ' · agent events posted ' + c.events_posted;
   }
 
   async function refresh() {
